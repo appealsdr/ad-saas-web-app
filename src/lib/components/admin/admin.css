@@ -1,0 +1,64 @@
+/* Platform admin styles — builds on the global design tokens in app.css. */
+.adm-shell { min-height: 100vh; background: var(--grey-bg); color: var(--navy); }
+.adm-top { background: var(--navy-dark); color: #fff; display: flex; align-items: center; gap: 24px; padding: 0 24px; height: var(--topbar-h, 58px); }
+.adm-top a { color: #cbd5e8; text-decoration: none; font-size: 14px; font-weight: 600; padding: 6px 2px; border-bottom: 2px solid transparent; }
+.adm-top a:hover, .adm-top a[aria-current='page'] { color: #fff; border-bottom-color: var(--orange); }
+.adm-top a:focus-visible, .adm-btn:focus-visible, .adm-tabs a:focus-visible { outline: 3px solid var(--orange); outline-offset: 2px; }
+.adm-brand { font-weight: 800; letter-spacing: .2px; color: #fff; }
+.adm-spacer { flex: 1; }
+.adm-who { font-size: 12px; color: #cbd5e8; }
+.adm-main { width: 100%; max-width: none; margin: 0; padding: 24px 32px; box-sizing: border-box; }
+.adm-h1 { font-size: 22px; font-weight: 800; margin: 0 0 4px; }
+.adm-sub { color: var(--grey-text); font-size: 13px; margin: 0 0 16px; }
+.adm-card { background: #fff; border: 1px solid var(--grey-line); border-radius: var(--radius, 12px); padding: 16px 20px; margin-bottom: 16px; box-shadow: var(--shadow); }
+.adm-card h2 { font-size: 15px; margin: 0 0 12px; }
+.adm-banner { background: var(--orange-lt); border: 1px solid var(--orange); color: #7a4b00; border-radius: 10px; padding: 10px 16px; display: flex; gap: 16px; align-items: center; margin-bottom: 16px; font-size: 14px; }
+.adm-banner strong { font-weight: 800; }
+.adm-tabs { display: flex; flex-wrap: wrap; gap: 4px; border-bottom: 1px solid var(--grey-line); margin-bottom: 16px; }
+.adm-tabs a { padding: 8px 14px; font-size: 13px; font-weight: 600; color: var(--grey-text); text-decoration: none; border-bottom: 2px solid transparent; }
+.adm-tabs a[aria-current='page'] { color: var(--navy); border-bottom-color: var(--orange); background: var(--orange-lt); border-radius: 6px 6px 0 0; }
+.adm-table-wrap { overflow-x: auto; }
+.adm-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.adm-table caption { text-align: left; font-weight: 700; padding: 0 0 8px; }
+.adm-table th { text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: .4px; color: var(--grey-text); padding: 8px 10px; border-bottom: 1px solid var(--grey-line); white-space: nowrap; }
+.adm-table td { padding: 9px 10px; border-bottom: 1px solid var(--grey-line); vertical-align: top; }
+.adm-table tr:last-child td { border-bottom: none; }
+.adm-table a { color: var(--navy); font-weight: 600; }
+.adm-mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+.adm-muted { color: var(--grey-text); }
+.adm-null { color: var(--grey-text); font-style: italic; }
+.adm-row { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; margin-bottom: 12px; }
+.adm-row label { display: flex; flex-direction: column; font-size: 12px; font-weight: 600; gap: 4px; }
+.adm-row input, .adm-row select, .adm-input, .adm-textarea { border: 1.5px solid var(--grey-line); border-radius: 8px; padding: 8px 10px; font-size: 13px; font-family: inherit; background: #fff; color: var(--navy); }
+.adm-textarea { width: 100%; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; min-height: 140px; }
+.adm-input:focus, .adm-textarea:focus, .adm-row input:focus, .adm-row select:focus { outline: 3px solid rgba(245,161,0,.35); border-color: var(--orange); }
+.adm-btn { display: inline-flex; align-items: center; gap: 6px; border: 0; border-radius: 8px; padding: 8px 14px; font-size: 13px; font-weight: 700; cursor: pointer; background: var(--orange); color: var(--navy-dark); text-decoration: none; }
+.adm-btn:hover:not(:disabled) { background: var(--orange-dk); }
+.adm-btn:disabled { opacity: .55; cursor: not-allowed; }
+.adm-btn.outline { background: #fff; border: 1.5px solid var(--grey-line); color: var(--navy); }
+.adm-btn.danger { background: var(--red); color: #fff; }
+.adm-btn.sm { padding: 5px 10px; font-size: 12px; }
+.adm-alert { border-radius: 8px; padding: 10px 14px; font-size: 13px; margin-bottom: 12px; }
+.adm-alert.error { background: var(--red-lt); color: #b91c1c; border: 1px solid #fca5a5; }
+.adm-alert.ok { background: var(--green-lt); color: #166534; border: 1px solid #86efac; }
+.adm-alert.warn { background: var(--yellow-lt); color: #92400e; border: 1px solid #fcd34d; }
+.adm-alert.info { background: var(--blue-lt); color: #1e40af; border: 1px solid #93c5fd; }
+.adm-empty { text-align: center; color: var(--grey-text); padding: 32px 0; font-size: 14px; }
+.adm-pager { display: flex; gap: 12px; align-items: center; justify-content: space-between; margin-top: 12px; font-size: 13px; }
+.adm-kv { display: grid; grid-template-columns: 180px 1fr; gap: 6px 16px; font-size: 13px; }
+.adm-kv dt { color: var(--grey-text); font-weight: 600; }
+.adm-kv dd { margin: 0; word-break: break-word; }
+.adm-split { display: grid; grid-template-columns: 240px minmax(0, 1fr); gap: 16px; align-items: start; }
+.adm-split > * { min-width: 0; }
+.adm-side { background: #fff; border: 1px solid var(--grey-line); border-radius: 12px; max-height: 70vh; overflow: auto; }
+.adm-side a { display: flex; justify-content: space-between; gap: 8px; padding: 8px 12px; font-size: 13px; color: var(--navy); text-decoration: none; border-bottom: 1px solid var(--grey-line); }
+.adm-side a[aria-current='page'] { background: var(--orange-lt); font-weight: 700; }
+.adm-side a:focus-visible { outline: 3px solid var(--orange); outline-offset: -3px; }
+pre.adm-pre { margin: 0 0 12px; }
+.adm-pre { background: #0f172a; color: #e2e8f0; border-radius: 8px; padding: 10px 12px; overflow: auto; max-height: 360px; font-size: 12px; white-space: pre-wrap; word-break: break-word; }
+.adm-sr { position: absolute; left: -9999px; }
+.adm-login { max-width: 420px; margin: 8vh auto; background: #fff; border-radius: 16px; padding: 32px; box-shadow: var(--shadow-xl); }
+.adm-login label { display: block; font-size: 12px; font-weight: 700; margin: 12px 0 4px; }
+.adm-login input[type='email'], .adm-login input[type='password'], .adm-login input[type='text'] { width: 100%; box-sizing: border-box; border: 1.5px solid var(--grey-line); border-radius: 8px; padding: 10px 12px; font-size: 14px; }
+.adm-login input:focus { outline: 3px solid rgba(245,161,0,.35); border-color: var(--orange); }
+@media (max-width: 800px) { .adm-split { grid-template-columns: 1fr; } .adm-kv { grid-template-columns: 1fr; } }

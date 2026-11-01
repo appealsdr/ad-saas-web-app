@@ -1,0 +1,413 @@
+---
+title: Appeals Doctor — Database Schema
+---
+erDiagram
+
+    %% ═══════════════════════════════════════════════════════
+    %% 🟢 AUTH & SESSIONS
+    %% ═══════════════════════════════════════════════════════
+
+    users {
+        UUID        id                  PK
+        TEXT        email               UK  "login identifier"
+        TEXT        display_name
+        TEXT        avatar_url
+        TEXT        password_hash           "null for OAuth-only users"
+        TEXT        role                    "owner | admin | member"
+        UUID        account_id          FK  "→ accounts"
+        TEXT        sfdc_contact_id         "Salesforce Contact Id"
+        TEXT        sfdc_account_id         "Salesforce Account Id"
+        BOOL        is_active
+        TIMESTAMPTZ last_login_at
+        TIMESTAMPTZ created_at
+        TIMESTAMPTZ updated_at
+    }
+
+    sessions {
+        UUID        id          PK
+        UUID        user_id     FK  "→ users"
+        TEXT        token_hash      "SHA-256 of JWT cookie"
+        TIMESTAMPTZ expires_at      "now() + 3h"
+        INET        ip_address
+        TEXT        user_agent
+        TIMESTAMPTZ created_at
+    }
+
+    oauth_accounts {
+        UUID        id           PK
+        UUID        user_id      FK  "→ users"
+        TEXT        provider         "google | apple"
+        TEXT        provider_uid     "provider's user ID"
+        TEXT        access_token
+        TEXT        refresh_token
+        TIMESTAMPTZ expires_at
+    }
+
+    password_reset_tokens {
+        UUID        id          PK
+        UUID        user_id     FK  "→ users"
+        TEXT        email           "snapshot at creation time"
+        TEXT        token_hash      "SHA-256 of raw token"
+        TIMESTAMPTZ expires_at      "now() + 1h"
+        TIMESTAMPTZ used_at         "null = still valid"
+        TIMESTAMPTZ created_at
+    }
+
+    %% ═══════════════════════════════════════════════════════
+    %% 🔵 ACCOUNTS & CONTACTS
+    %% ═══════════════════════════════════════════════════════
+
+    accounts {
+        UUID        id                  PK
+        TEXT        name                    "company name"
+        TEXT        email
+        TEXT        phone
+        TEXT        website
+        TEXT        sfdc_account_id     UK  "Salesforce Account Id"
+        TEXT        billing_street
+        TEXT        billing_city
+        TEXT        billing_state
+        TEXT        billing_postal_code
+        TEXT        billing_country
+        TIMESTAMPTZ created_at
+        TIMESTAMPTZ updated_at
+    }
+
+    account_contacts {
+        UUID        id                    PK
+        UUID        account_id            FK  "→ accounts"
+        UUID        user_id               FK  "→ users (null until registered)"
+        TEXT        first_name
+        TEXT        last_name
+        TEXT        email
+        TEXT        phone
+        TEXT        title                     "job title"
+        BOOL        is_point_of_contact       "max 1 per account (unique index)"
+        TEXT        sfdc_contact_id           "Salesforce Contact Id"
+        TEXT        invite_token          UK  "pending invite token (hashed)"
+        TIMESTAMPTZ invite_sent_at
+        TIMESTAMPTZ invite_accepted_at
+        UUID        created_by            FK  "→ users"
+        TIMESTAMPTZ created_at
+        TIMESTAMPTZ updated_at
+    }
+
+    %% ═══════════════════════════════════════════════════════
+    %% 🟠 STORES & SP-API
+    %% ═══════════════════════════════════════════════════════
+
+    stores {
+        UUID        id                              PK
+        UUID        account_id                      FK  "→ accounts"
+        UUID        created_by                      FK  "→ users"
+        TEXT        name
+        TEXT        marketplaces                        "semicolon-joined picklist"
+        TEXT        seller_id                           "Amazon Seller ID"
+        TEXT        seller_primary_email
+        TEXT        store_email
+        TEXT        business_name
+        TEXT        country
+        TEXT        sfdc_store_id                   UK  "Salesforce Store__c Id"
+        TEXT        spapi_status                        "disconnected | connected | error"
+        TEXT        spapi_refresh_token                 "long-lived LWA token"
+        TEXT        spapi_access_token                  "short-lived; lazy-refreshed"
+        TIMESTAMPTZ spapi_access_token_expires_at
+        TEXT        spapi_connected_seller_id
+        TIMESTAMPTZ spapi_connected_at
+        JSONB       spapi_callback_params               "raw OAuth callback audit"
+        TEXT        spapi_last_error
+        TIMESTAMPTZ created_at
+        TIMESTAMPTZ updated_at
+    }
+
+    spapi_oauth_states {
+        TEXT        state       PK  "random opaque CSRF token sent to Amazon"
+        UUID        store_id    FK  "→ stores"
+        UUID        user_id     FK  "→ users"
+        TIMESTAMPTZ created_at
+        TIMESTAMPTZ expires_at      "~10 min TTL; ephemeral"
+    }
+
+    %% ═══════════════════════════════════════════════════════
+    %% 🟣 DOCUMENTS & CASES
+    %% ═══════════════════════════════════════════════════════
+
+    case_documents {
+        UUID    id                  PK
+        UUID    store_id            FK  "→ stores (tenancy)"
+        TEXT    sfdc_case_id            "Salesforce Case Id (no local FK)"
+        TEXT    sfdc_case_file_id   UK  "Salesforce Case_File__c slot"
+        UUID    uploaded_by         FK  "→ users"
+        TEXT    original_name
+        TEXT    s3_bucket
+        TEXT    s3_key
+        TEXT    mime_type
+        BIGINT  size_bytes
+        TIMESTAMPTZ created_at
+    }
+
+    store_documents {
+        UUID    id                  PK
+        UUID    store_id            FK  "→ stores"
+        UUID    uploaded_by         FK  "→ users"
+        TEXT    sfdc_case_file_id   UK  "Salesforce Case_File__c slot (store-level)"
+        TEXT    original_name
+        TEXT    s3_bucket
+        TEXT    s3_key
+        TEXT    storage_path            "legacy dev path (pre-S3)"
+        TEXT    mime_type
+        BIGINT  size_bytes
+        TIMESTAMPTZ created_at
+    }
+
+    %% ═══════════════════════════════════════════════════════
+    %% 🔴 PAYMENTS
+    %% ═══════════════════════════════════════════════════════
+
+    service_contracts {
+        UUID        id                          PK
+        UUID        account_id                  FK  "→ accounts"
+        UUID        user_id                     FK  "→ users"
+        UUID        store_id                    FK  "→ stores"
+        TEXT        stripe_payment_intent_id    UK  "Stripe idempotency key"
+        TEXT        stripe_charge_id
+        TEXT        stripe_payment_method_type
+        TEXT        stripe_receipt_email
+        BIGINT      amount_cents
+        TEXT        currency
+        TIMESTAMPTZ paid_at
+        DATE        start_date
+        DATE        end_date
+        INT         term_months                     "default 3"
+        TEXT        sfdc_service_contract_id    UK  "Salesforce ServiceContract Id"
+        TEXT        sfdc_account_id
+        TEXT        sfdc_contact_id
+        TEXT        sfdc_store_id
+        TEXT        sfdc_pricebook2_id
+        TEXT        sync_status                     "pending | synced | failed"
+        TEXT        sync_error
+        TIMESTAMPTZ synced_at
+        TIMESTAMPTZ created_at
+        TIMESTAMPTZ updated_at
+    }
+
+    service_contract_line_items {
+        UUID        id                          PK
+        UUID        service_contract_id         FK  "→ service_contracts"
+        TEXT        product_name
+        TEXT        product_description
+        TEXT        product_category
+        TEXT        sfdc_product_id                 "Salesforce Product2 Id"
+        TEXT        sfdc_pricebook_entry_id         "Salesforce PricebookEntry Id"
+        NUMERIC     unit_price
+        INT         quantity
+        TEXT        currency
+        TEXT        sfdc_contract_line_item_id      "Salesforce ContractLineItem Id"
+        TIMESTAMPTZ created_at
+    }
+
+    %% ═══════════════════════════════════════════════════════
+    %% ⚫ OPS / SYNC
+    %% ═══════════════════════════════════════════════════════
+
+    error_log {
+        UUID        id              PK
+        TEXT        source              "salesforce.sync | register | login…"
+        TEXT        operation           "create_account | lookup_user…"
+        TEXT        severity            "error | warn"
+        UUID        user_id         FK  "→ users (SET NULL on delete)"
+        UUID        account_id      FK  "→ accounts (SET NULL on delete)"
+        TEXT        sfdc_object         "Account | Contact | null"
+        TEXT        error_code          "SF error code or HTTP status"
+        TEXT        error_message
+        JSONB       context             "extra data — no secrets"
+        TEXT        stack
+        TIMESTAMPTZ created_at
+    }
+
+    sfdc_sync_queue {
+        UUID        id              PK
+        TEXT        operation           "upsert | delete"
+        TEXT        sfdc_object         "Account | Contact | Store__c…"
+        TEXT        record_id           "local or SF ID"
+        JSONB       payload             "fields to write to Salesforce"
+        TEXT        status              "pending | processing | done | failed"
+        INT         attempts
+        TEXT        last_error
+        TIMESTAMPTZ created_at
+        TIMESTAMPTZ processed_at
+    }
+
+    sfdc_records {
+        TEXT        sfdc_id         PK  "Salesforce record Id"
+        TEXT        object_type         "Account | Contact | Store__c…"
+        JSONB       data                "full record snapshot"
+        TIMESTAMPTZ synced_at
+    }
+
+    activity_log {
+        UUID        id          PK
+        UUID        user_id     FK  "→ users (SET NULL on delete)"
+        UUID        session_id      "not FK — sessions are purged"
+        TEXT        event_type      "login | page_view | action"
+        JSONB       event_data      "screen name, metadata"
+        INET        ip_address
+        TIMESTAMPTZ created_at
+    }
+
+    %% ═══════════════════════════════════════════════════════
+    %% ☁️  SALESFORCE OBJECTS  (synced via REST API — no local table)
+    %% ═══════════════════════════════════════════════════════
+
+    SF_Account {
+        SFID    Id                      PK  "→ accounts.sfdc_account_id"
+        TEXT    Name                        "← accounts.name"
+        TEXT    Phone                       "← accounts.phone"
+        TEXT    Website                     "← accounts.website"
+        TEXT    Primary_Email__c            "← accounts.email (custom field)"
+        DATE    Start_Date__c              "← accounts.created_at"
+        TEXT    BillingStreet
+        TEXT    BillingCity
+        TEXT    BillingState
+        TEXT    BillingPostalCode
+        TEXT    BillingCountry
+        TEXT    appealsdoctor_vuid__c       "← accounts.id (back-reference)"
+    }
+
+    SF_Contact {
+        SFID    Id                      PK  "→ users.sfdc_contact_id / account_contacts.sfdc_contact_id"
+        SFID    AccountId               FK  "→ SF_Account"
+        TEXT    FirstName
+        TEXT    LastName
+        TEXT    Email
+        TEXT    Phone
+        TEXT    appealsdoctor_vuid__c       "← users.id (back-reference)"
+    }
+
+    SF_Store__c {
+        SFID    Id                              PK  "→ stores.sfdc_store_id"
+        TEXT    Name                                "← stores.name"
+        TEXT    Marketplaces__c                     "← stores.marketplaces"
+        TEXT    Seller_ID__c                        "← stores.seller_id"
+        TEXT    Seller_Account_Primary_Email__c
+        TEXT    Store_Email__c
+        TEXT    Business_Name__c
+        TEXT    Country__c
+        TEXT    appealsdoctor_vuid__c               "← stores.id"
+    }
+
+    SF_Case {
+        SFID    Id          PK  "→ case_documents.sfdc_case_id"
+        SFID    AccountId   FK  "→ SF_Account"
+        SFID    Store__c    FK  "→ SF_Store__c (custom lookup)"
+        TEXT    Subject
+        TEXT    Status
+        TEXT    CaseNumber
+    }
+
+    SF_Case_File__c {
+        SFID    Id          PK  "→ case_documents.sfdc_case_file_id / store_documents.sfdc_case_file_id"
+        SFID    Case__c     FK  "→ SF_Case (null for store-level)"
+        SFID    Store__c    FK  "→ SF_Store__c"
+        TEXT    Name            "document label shown to user"
+        BOOL    Required__c
+    }
+
+    SF_ServiceContract {
+        SFID    Id              PK  "→ service_contracts.sfdc_service_contract_id"
+        SFID    AccountId       FK  "→ SF_Account"
+        SFID    Pricebook2Id    FK  "→ SF_Pricebook2"
+        DATE    StartDate
+        DATE    EndDate
+        TEXT    Status
+    }
+
+    SF_ContractLineItem {
+        SFID    Id                  PK  "→ service_contract_line_items.sfdc_contract_line_item_id"
+        SFID    ServiceContractId   FK  "→ SF_ServiceContract"
+        SFID    PricebookEntryId    FK  "→ SF_PricebookEntry"
+        NUMBER  Quantity
+        NUMBER  UnitPrice
+    }
+
+    SF_Pricebook2 {
+        SFID    Id      PK  "→ service_contracts.sfdc_pricebook2_id"
+        TEXT    Name
+        BOOL    IsActive
+    }
+
+    SF_PricebookEntry {
+        SFID    Id              PK  "→ service_contract_line_items.sfdc_pricebook_entry_id"
+        SFID    Pricebook2Id    FK  "→ SF_Pricebook2"
+        SFID    Product2Id      FK  "→ SF_Product2"
+        NUMBER  UnitPrice
+        TEXT    CurrencyIsoCode
+    }
+
+    SF_Product2 {
+        SFID    Id          PK  "→ service_contract_line_items.sfdc_product_id"
+        TEXT    Name
+        TEXT    Description
+        TEXT    Family
+        BOOL    IsActive
+    }
+
+    %% ═══════════════════════════════════════════════════════
+    %% RELATIONSHIPS — Local PostgreSQL
+    %% ═══════════════════════════════════════════════════════
+
+    users               ||--o{ sessions                      : "has sessions"
+    users               ||--o{ oauth_accounts                : "has OAuth links"
+    users               ||--o{ password_reset_tokens         : "has reset tokens"
+    users               }o--|| accounts                      : "belongs to"
+    accounts            ||--o{ account_contacts              : "has contacts"
+    users               ||--o{ account_contacts              : "user_id (registered contact)"
+    users               ||--o{ account_contacts              : "created_by"
+    accounts            ||--o{ stores                        : "owns stores"
+    users               ||--o{ stores                        : "created_by"
+    stores              ||--o{ spapi_oauth_states            : "OAuth CSRF states"
+    users               ||--o{ spapi_oauth_states            : "initiated by"
+    stores              ||--o{ case_documents                : "tenancy"
+    users               ||--o{ case_documents                : "uploaded_by"
+    stores              ||--o{ store_documents               : "has store docs"
+    users               ||--o{ store_documents               : "uploaded_by"
+    accounts            ||--o{ service_contracts             : "has contracts"
+    users               ||--o{ service_contracts             : "purchased by"
+    stores              ||--o{ service_contracts             : "for store"
+    service_contracts   ||--o{ service_contract_line_items   : "has line items"
+    users               ||--o{ error_log                     : "user_id"
+    accounts            ||--o{ error_log                     : "account_id"
+    users               ||--o{ activity_log                  : "user_id"
+
+    %% ═══════════════════════════════════════════════════════
+    %% RELATIONSHIPS — Salesforce sync links
+    %% ═══════════════════════════════════════════════════════
+
+    accounts            }o--o| SF_Account                    : "sfdc_account_id ↔ SF"
+    users               }o--o| SF_Contact                    : "sfdc_contact_id ↔ SF"
+    account_contacts    }o--o| SF_Contact                    : "sfdc_contact_id ↔ SF"
+    stores              }o--o| SF_Store__c                   : "sfdc_store_id ↔ SF"
+    case_documents      }o--o| SF_Case                       : "sfdc_case_id (read)"
+    case_documents      }o--o| SF_Case_File__c               : "sfdc_case_file_id ↔ SF"
+    store_documents     }o--o| SF_Case_File__c               : "sfdc_case_file_id ↔ SF"
+    service_contracts   }o--o| SF_ServiceContract            : "sfdc_service_contract_id ↔ SF"
+    service_contract_line_items }o--o| SF_ContractLineItem   : "sfdc_contract_line_item_id ↔ SF"
+    service_contract_line_items }o--o| SF_PricebookEntry     : "sfdc_pricebook_entry_id (read)"
+    service_contract_line_items }o--o| SF_Product2           : "sfdc_product_id (read)"
+
+    %% ═══════════════════════════════════════════════════════
+    %% RELATIONSHIPS — Salesforce internal
+    %% ═══════════════════════════════════════════════════════
+
+    SF_Contact          }o--|| SF_Account                    : "AccountId"
+    SF_Store__c         }o--o| SF_Account                    : "Account__c"
+    SF_Case             }o--|| SF_Account                    : "AccountId"
+    SF_Case             }o--o| SF_Store__c                   : "Store__c"
+    SF_Case_File__c     }o--o| SF_Case                       : "Case__c"
+    SF_Case_File__c     }o--o| SF_Store__c                   : "Store__c"
+    SF_ServiceContract  }o--|| SF_Account                    : "AccountId"
+    SF_ServiceContract  }o--|| SF_Pricebook2                 : "Pricebook2Id"
+    SF_ContractLineItem }o--|| SF_ServiceContract            : "ServiceContractId"
+    SF_ContractLineItem }o--|| SF_PricebookEntry             : "PricebookEntryId"
+    SF_PricebookEntry   }o--|| SF_Pricebook2                 : "Pricebook2Id"
+    SF_PricebookEntry   }o--|| SF_Product2                   : "Product2Id"

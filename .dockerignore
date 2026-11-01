@@ -1,0 +1,16 @@
+node_modules
+.svelte-kit
+build
+.git
+.env
+.env.*
+!.env.example
+keys/*
+*.key
+*.crt
+*.pem
+uploads/
+docs
+*.md
+.DS_Store
+.vscode

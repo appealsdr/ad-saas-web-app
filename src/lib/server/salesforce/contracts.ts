@@ -1,0 +1,431 @@
+/**
+ * Salesforce ServiceContract + ContractLineItem sync.
+ *
+ * Field mapping (Stripe → SF ServiceContract):
+ *
+ *   AccountId                       — local accounts.sfdc_account_id
+ *   ContactId    (standard lookup)  — local users.sfdc_contact_id
+ *   Store__c     (custom lookup)    — local stores.sfdc_store_id
+ *   Name                            — "<Store Name> <YYYY-MM-DD> Services"
+ *   StartDate                       — PaymentIntent.created
+ *   EndDate                         — StartDate + Term months
+ *   Term                            — 3
+ *   Pricebook2Id                    — SERVICE pricebook
+ *
+ * ContractLineItem (per purchased item):
+ *   ServiceContractId               — parent
+ *   PricebookEntryId                — local pricebook_entry_id from selection
+ *   Quantity                        — purchased quantity (currently always 1)
+ *   UnitPrice                       — from the catalog at purchase time
+ *
+ * Payment info (Stripe PaymentIntent) is no longer written onto the
+ * ServiceContract — it's created as its own Payment__c record instead (see
+ * payments.ts), linked to the Case opened for the purchase.
+ *
+ * If your org renames any of these, update the *_FIELD constants below.
+ */
+import { sobjectCreate, sobjectUpdate, sobjectDelete, sfdcQuery, SalesforceApiError } from './client';
+import { logError } from '../error_log';
+import { VUID_FIELD } from './vuid';
+import { createServiceCase } from './service-cases';
+import { createPayment } from './payments';
+
+// ── SF API names — tweak if your org uses different ones ──
+const SERVICE_CONTRACT_FIELDS = {
+	contact: 'ContactId',            // standard lookup to Contact
+	store: 'Store__c'                // custom lookup
+};
+
+export interface ServiceContractInput {
+	name: string;                    // Salesforce Name field for the ServiceContract
+	/**
+	 * 'service' (one-off, from the Service pricebook) vs 'subscription' (recurring
+	 * plan). Cases are only auto-created for 'service' — a subscription's Cases
+	 * are opened manually by technicians in Salesforce, not by this app.
+	 */
+	kind: 'service' | 'subscription';
+	sfdcAccountId: string;
+	sfdcContactId: string | null;
+	sfdcStoreId: string | null;
+	sfdcPricebook2Id: string;
+	startDate: Date;
+	termMonths: number;
+	stripe: {
+		paymentIntentId: string;
+		chargeId: string | null;
+		amount: number;                  // in dollars (already divided by 100)
+		currency: string;                // ISO code, uppercase
+		receiptEmail: string | null;
+		paymentMethodId: string | null;
+		paymentMethodType: string | null;
+	};
+	lineItems: Array<{
+		pricebookEntryId: string;
+		quantity: number;
+		unitPrice: number;
+		name: string;                    // service name → Case.Subject
+		/**
+		 * Part of this line NOT charged at checkout (the rest of a Deposit product). It becomes its own
+		 * Pending Payment__c linked to this ContractLineItem, collected when the case is completed.
+		 */
+		balanceDue?: number;
+	}>;
+	sfdcStoreContactId?: string | null;  // store point of contact → Case.ContactId
+	localContractId?: string;          // → appealsdoctor_vuid__c
+	/** ServiceContract.Payment_Status__c — 'Paid' for a one-off service, 'Subscription' for a recurring plan. */
+	paymentStatus?: string;
+}
+
+export type ServiceContractResult =
+	| {
+			ok: true;
+			sfdcServiceContractId: string;
+			lineItemIds: string[];        // same order as input.lineItems; null entries on per-item failure
+		}
+	| { ok: false; error: string; errorCode?: string };
+
+function toSfDate(d: Date): string {
+	return d.toISOString().slice(0, 10);
+}
+
+function addMonths(d: Date, months: number): Date {
+	const out = new Date(d.getTime());
+	out.setUTCMonth(out.getUTCMonth() + months);
+	return out;
+}
+
+function formatMoney(amount: number, currency: string): string {
+	try {
+		return new Intl.NumberFormat('en-US', { style: 'currency', currency }).format(amount);
+	} catch {
+		// Unknown/invalid ISO code — fall back to a plain two-decimal amount.
+		return `${amount.toFixed(2)} ${currency}`;
+	}
+}
+
+/**
+ * Build the ServiceContract Description: one line per purchased line item with
+ * its quantity, name and extended price, followed by an overall total.
+ *
+ *   2 × Roof Inspection — $300.00
+ *   1 × Gutter Cleaning — $120.00
+ *   ─────────────
+ *   Total: $420.00
+ */
+function buildContractDescription(input: ServiceContractInput): string {
+	const currency = input.stripe.currency;
+	const lines = input.lineItems.map((li) => {
+		const lineTotal = li.unitPrice * li.quantity;
+		return `${li.quantity} × ${li.name} — ${formatMoney(lineTotal, currency)}`;
+	});
+	const computedTotal = input.lineItems.reduce((sum, li) => sum + li.unitPrice * li.quantity, 0);
+	const out = [...lines, `Total: ${formatMoney(computedTotal, currency)}`];
+	// Deposit services: the order was only partly charged at checkout.
+	const balance = input.lineItems.reduce((sum, li) => sum + (li.balanceDue ?? 0), 0);
+	if (balance > 0) {
+		out.push(`Paid at checkout: ${formatMoney(input.stripe.amount, currency)}`);
+		out.push(`Balance, billed per service when each case is completed: ${formatMoney(balance, currency)}`);
+	}
+	return out.join('\n');
+}
+
+/** What already exists in Salesforce for a contract, so a repair only adds what is missing. */
+export interface ExistingContractRecords {
+	/** Index-aligned with input.lineItems; '' / undefined = not created yet. */
+	lineItemIds?: string[];
+	/** ContractLineItem Id → Case Id for cases that already exist. */
+	caseByLine?: Map<string, string>;
+	/** Any case on the contract (used for payments of lines that have none). */
+	anyCaseId?: string | null;
+}
+
+export interface PopulateResult {
+	lineItemIds: string[];
+	created: { lines: number; cases: number; payments: number };
+	/** Redundant auto-generated pending payments that were deleted/cancelled. */
+	reconciled: { removed: number; cancelled: number };
+}
+
+/** How to treat redundant pending payments that Salesforce's own line-item automation generated. */
+export type ReconcileMode = 'cancel' | 'delete';
+
+interface SfPaymentRow {
+	Id: string; Contract_Line_Item__c: string | null; Payment_Type__c: string | null; Status__c: string | null;
+	Stripe_Payment_Intent_Id__c: string | null; Order_Ref__c: string | null;
+}
+
+/** Payment types written by Salesforce's own ContractLineItemPaymentService (the app writes 'Service Contract' and 'Balance'). */
+const SF_AUTO_TYPES = new Set(['First Payment', 'Deposit', 'Full']);
+export const checkoutRef = (localContractId: string) => `${localContractId}:checkout`;
+export const balanceRef = (localContractId: string, lineItemId: string) => `${localContractId}:balance:${lineItemId}`;
+
+/**
+ * Create whatever the contract is still missing: ContractLineItems, one Case per line, the paid first
+ * payment, and one Pending balance payment per deposit line. Every Payment__c carries Case__c — the org's
+ * "Payment After Save" flow needs it. Safe to re-run: existing records are skipped.
+ */
+export async function populateContract(
+	sfdcServiceContractId: string,
+	input: ServiceContractInput,
+	existing: ExistingContractRecords,
+	context: { userId?: string; accountId?: string } = {},
+	reconcile: ReconcileMode = 'cancel'
+): Promise<PopulateResult> {
+	const made = { lines: 0, cases: 0, payments: 0 };
+
+	// ── 2. ContractLineItem per purchased entry (parallel; existing ones are kept) ──
+	const lineItemIds = await Promise.all(
+		input.lineItems.map(async (li, idx): Promise<string> => {
+			if (existing.lineItemIds?.[idx]) return existing.lineItemIds[idx];
+			// A subscription is a one-year plan, billed as one unit per month: the line item has Quantity = the
+			// number of months (12) and a monthly UnitPrice, so Quantity × UnitPrice is the yearly price that was charged.
+			const monthly = input.kind === 'subscription' && input.termMonths > 0;
+			const payload: Record<string, unknown> = {
+				ServiceContractId: sfdcServiceContractId,
+				PricebookEntryId: li.pricebookEntryId,
+				Quantity: monthly ? input.termMonths : li.quantity,
+				UnitPrice: monthly ? Math.round(((li.unitPrice * li.quantity) / input.termMonths) * 100) / 100 : li.unitPrice
+			};
+			try {
+				const res = await sobjectCreate('ContractLineItem', payload);
+				if (!res.success) {
+					await logError({
+						source: 'salesforce.contracts', operation: 'create_contract_line_item', severity: 'warn',
+						userId: context.userId, accountId: context.accountId, sfdcObject: 'ContractLineItem',
+						errorMessage: `ContractLineItem create returned success=false: ${JSON.stringify(res.errors)}`,
+						context: { payload, sfdcServiceContractId }
+					});
+					return '';
+				}
+				made.lines++;
+				return res.id;
+			} catch (e) {
+				const isSfErr = e instanceof SalesforceApiError;
+				await logError({
+					source: 'salesforce.contracts', operation: 'create_contract_line_item', severity: 'warn',
+					userId: context.userId, accountId: context.accountId, sfdcObject: 'ContractLineItem',
+					errorCode: (e instanceof SalesforceApiError ? e.errorCode : undefined) ?? (isSfErr ? String(e.status) : undefined),
+					errorMessage: e instanceof Error ? e.message : String(e),
+					stack: e instanceof Error ? e.stack : undefined,
+					context: { payload, sfdcServiceContractId }
+				});
+				return '';
+			}
+		})
+	);
+
+	// ── 3. One Case per ContractLineItem that has none (best-effort) ──
+	//    Subject = service name; Contract__c / Contract_Line_Item__c link back; ContactId = the store's
+	//    point of contact. Subscriptions are excluded: their Cases are opened manually in Salesforce.
+	const caseByLine = new Map<string, string>(existing.caseByLine ?? []);
+	if (input.kind !== 'subscription') {
+		await Promise.all(
+			input.lineItems.map(async (li, i) => {
+				const lineItemId = lineItemIds[i];
+				if (!lineItemId || caseByLine.has(lineItemId)) return; // CLI failed → no case; or case already exists
+				const res = await createServiceCase(
+					{
+						sfdcContractId: sfdcServiceContractId, sfdcContractLineItemId: lineItemId, subject: li.name,
+						sfdcAccountId: input.sfdcAccountId, sfdcStoreId: input.sfdcStoreId,
+						sfdcContactId: input.sfdcStoreContactId ?? input.sfdcContactId
+					},
+					context
+				);
+				if (res.ok) { caseByLine.set(lineItemId, res.id); made.cases++; }
+			})
+		);
+	}
+	// Payments need a Case (see PaymentInput.sfdcCaseId). The contract-level payment uses the first line's case.
+	const firstCaseId =
+		input.lineItems.map((_, i) => caseByLine.get(lineItemIds[i])).find((c): c is string => !!c) ?? existing.anyCaseId ?? null;
+
+	// ── 4-5. Payments — idempotent: look at what the contract already has, create only what is missing ──
+	//    Retries, the repair action and Salesforce's own line-item automation (which can add its own pending
+	//    "First Payment"/"Deposit"/"Full" records) must never produce a second checkout or balance record.
+	let existingPays: SfPaymentRow[] = [];
+	try {
+		existingPays = (await sfdcQuery<SfPaymentRow>(
+			`SELECT Id, Contract_Line_Item__c, Payment_Type__c, Status__c, Stripe_Payment_Intent_Id__c, Order_Ref__c FROM Payment__c WHERE Service_Contract__c = '${sfdcServiceContractId}'`,
+			{ paginate: true }
+		)).records;
+	} catch {
+		existingPays = []; // can't tell → fall through; the create calls below are individually best-effort
+	}
+	const localRef = input.localContractId;
+	const hasCheckout = existingPays.some(
+		(p) => p.Stripe_Payment_Intent_Id__c === input.stripe.paymentIntentId || (localRef && p.Order_Ref__c === checkoutRef(localRef))
+	);
+	const hasBalance = (lineItemId: string, li: { name: string }) =>
+		existingPays.some(
+			(p) => p.Contract_Line_Item__c === lineItemId && (p.Payment_Type__c === 'Balance' || (localRef && p.Order_Ref__c === balanceRef(localRef, lineItemId)))
+		);
+
+	// 4. ONE contract-level payment for what was actually charged, itemised. Paid only because the Stripe charge succeeded.
+	let haveCheckout = hasCheckout;
+	if (!hasCheckout) {
+		const checkout = (description: string) =>
+			createPayment(
+				{
+					amount: input.stripe.amount, currency: input.stripe.currency, description,
+					paymentType: 'Service Contract',
+					stripe: { paymentIntentId: input.stripe.paymentIntentId, paymentMethodId: input.stripe.paymentMethodId },
+					sfdcServiceContractId, sfdcCaseId: firstCaseId, orderRef: localRef ? checkoutRef(localRef) : null
+				},
+				context
+			);
+		let res = await checkout(buildCheckoutPaymentDescription(input));
+		// The collected payment is the record that matters most — never lose it to a description problem.
+		if (!res.ok) res = await checkout(`Checkout payment of ${formatMoney(input.stripe.amount, input.stripe.currency)}`);
+		if (res.ok) { made.payments++; haveCheckout = true; }
+	}
+
+	// 5. Deposit services: one balance payment per line for the part not charged yet — created Not Active,
+	//    moved to 'Request Payment' (in Salesforce) when the case completes or a payment is requested.
+	//    Linked to the contract, the ContractLineItem and that line's Case; collected when the case is completed.
+	await Promise.all(
+		input.lineItems.map(async (li, i) => {
+			const lineItemId = lineItemIds[i];
+			const balance = Math.round((li.balanceDue ?? 0) * 100) / 100;
+			if (!lineItemId || balance <= 0 || hasBalance(lineItemId, li)) return;
+			const res = await createPayment(
+				{
+					amount: balance, currency: input.stripe.currency,
+					description: `Remaining balance for ${li.name} — collect when its case is completed`,
+					paymentType: 'Balance', status: 'Not Active',
+					sfdcServiceContractId, sfdcContractLineItemId: lineItemId,
+					sfdcCaseId: caseByLine.get(lineItemId) ?? firstCaseId, orderRef: localRef ? balanceRef(localRef, lineItemId) : null
+				},
+				context
+			);
+			if (res.ok) made.payments++;
+		})
+	);
+
+	// 6. Reconcile: the deposits are components of the single checkout charge, so the pending First Payment /
+	//    Deposit / Full records generated by Salesforce's automation are redundant. Only ever touches PENDING
+	//    records of those types with no Stripe charge, and only once the paid checkout payment exists.
+	const reconciled = { removed: 0, cancelled: 0 };
+	// Balances this app created earlier as 'Pending' become 'Not Active' (not collectible until requested).
+	for (const p of existingPays) {
+		if (p.Payment_Type__c === 'Balance' && p.Status__c === 'Pending' && !p.Stripe_Payment_Intent_Id__c) {
+			try { await sobjectUpdate('Payment__c', p.Id, { Status__c: 'Not Active' }); } catch { /* picklist value not available yet */ }
+		}
+	}
+	if (haveCheckout) {
+		// Pending ones always; Cancelled ones too when deleting (left behind by an earlier cancel-only clean-up).
+		const redundant = existingPays.filter(
+			(p) =>
+				(p.Status__c === 'Pending' || (reconcile === 'delete' && p.Status__c === 'Cancelled')) &&
+				SF_AUTO_TYPES.has(p.Payment_Type__c ?? '') && !p.Stripe_Payment_Intent_Id__c
+		);
+		for (const p of redundant) {
+			try {
+				if (reconcile === 'delete') { await sobjectDelete('Payment__c', p.Id); reconciled.removed++; }
+				else { await sobjectUpdate('Payment__c', p.Id, { Status__c: 'Cancelled' }); reconciled.cancelled++; }
+			} catch (e) {
+				try {
+					if (reconcile === 'delete') { await sobjectUpdate('Payment__c', p.Id, { Status__c: 'Cancelled' }); reconciled.cancelled++; }
+				} catch { /* leave it; reported by the caller's counts */ }
+				await logError({
+					source: 'salesforce.contracts', operation: 'reconcile_redundant_payment', severity: 'warn', accountId: context.accountId,
+					sfdcObject: 'Payment__c', errorMessage: e instanceof Error ? e.message : String(e), context: { paymentId: p.Id, mode: reconcile }
+				});
+			}
+		}
+	}
+
+		return { lineItemIds, created: made, reconciled };
+}
+
+/**
+ * Description of the single checkout payment: what the one charge covers, per line
+ * ("FBM Account Suspension in full ($3,000.00); A-Z Claims deposit ($150.00); …").
+ */
+export function buildCheckoutPaymentDescription(input: ServiceContractInput): string {
+	const currency = input.stripe.currency;
+	// Group identical lines ("2 × A-Z Claims deposit ($300.00)") — Payment__c.Description__c holds 255 characters.
+	const groups = new Map<string, { label: string; qty: number; now: number }>();
+	for (const li of input.lineItems) {
+		const now = li.unitPrice * li.quantity - (li.balanceDue ?? 0);
+		const label = (li.balanceDue ?? 0) > 0 ? `${li.name} deposit` : `${li.name} in full`;
+		const g = groups.get(label) ?? { label, qty: 0, now: 0 };
+		g.qty += 1;
+		g.now += now;
+		groups.set(label, g);
+	}
+	const parts = [...groups.values()].map((g) => `${g.qty > 1 ? `${g.qty} × ` : ''}${g.label} (${formatMoney(g.now, currency)})`);
+	return `Checkout payment of ${formatMoney(input.stripe.amount, currency)} — one transaction covering ${parts.join('; ')}.`;
+}
+
+/**
+ * Create a ServiceContract for the purchase, then create a ContractLineItem
+ * for each purchased catalog entry. Returns the SF Ids on success.
+ *
+ * The ServiceContract create runs in one POST; the line items run in parallel
+ * — slower SF orgs benefit from this. If a line item fails its id is null
+ * in the returned array but the ServiceContract itself is still considered
+ * successful (caller can retry orphans).
+ */
+export async function createServiceContractWithLines(
+	input: ServiceContractInput,
+	context: { userId?: string; accountId?: string } = {}
+): Promise<ServiceContractResult> {
+	const startDate = input.startDate;
+	const endDate = addMonths(startDate, input.termMonths);
+
+	const contractPayload: Record<string, unknown> = {
+		Name: input.name,
+		AccountId: input.sfdcAccountId,
+		Description: buildContractDescription(input),
+		StartDate: toSfDate(startDate),
+		EndDate: toSfDate(endDate),
+		Term: input.termMonths,
+		Pricebook2Id: input.sfdcPricebook2Id
+	};
+	if (input.sfdcContactId) contractPayload[SERVICE_CONTRACT_FIELDS.contact] = input.sfdcContactId;
+	if (input.sfdcStoreId) contractPayload[SERVICE_CONTRACT_FIELDS.store] = input.sfdcStoreId;
+	if (input.localContractId) contractPayload[VUID_FIELD] = input.localContractId;
+	if (input.paymentStatus) contractPayload['Payment_Status__c'] = input.paymentStatus;
+
+	// ── 1. ServiceContract ──
+	let sfdcServiceContractId: string;
+	try {
+		const created = await sobjectCreate('ServiceContract', contractPayload);
+		if (!created.success) {
+			const error = `Salesforce ServiceContract create returned success=false: ${JSON.stringify(created.errors)}`;
+			await logError({
+				source: 'salesforce.contracts',
+				operation: 'create_service_contract',
+				userId: context.userId,
+				accountId: context.accountId,
+				sfdcObject: 'ServiceContract',
+				errorMessage: error,
+				context: { payload: contractPayload, stripePaymentIntentId: input.stripe.paymentIntentId }
+			});
+			return { ok: false, error };
+		}
+		sfdcServiceContractId = created.id;
+	} catch (e) {
+		const isSfErr = e instanceof SalesforceApiError;
+		const errorMessage = e instanceof Error ? e.message : String(e);
+		const errorCode = isSfErr ? e.errorCode : undefined;
+		await logError({
+			source: 'salesforce.contracts',
+			operation: 'create_service_contract',
+			userId: context.userId,
+			accountId: context.accountId,
+			sfdcObject: 'ServiceContract',
+			errorCode: errorCode ?? (isSfErr ? String(e.status) : undefined),
+			errorMessage,
+			stack: e instanceof Error ? e.stack : undefined,
+			context: { payload: contractPayload, stripePaymentIntentId: input.stripe.paymentIntentId }
+		});
+		return { ok: false, error: errorMessage, errorCode };
+	}
+
+	// ── 2-5. Line items, cases, the paid payment and the balance payments ──
+	// 'delete': Salesforce's own line-item automation may have just generated redundant pending payments on this brand-new
+	// contract — remove them so only the checkout payment and the balances exist (no leftover Cancelled duplicates).
+	const { lineItemIds } = await populateContract(sfdcServiceContractId, input, {}, context, 'delete');
+	return { ok: true, sfdcServiceContractId, lineItemIds };
+}

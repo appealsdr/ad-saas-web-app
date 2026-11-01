@@ -1,0 +1,30 @@
+node_modules
+.svelte-kit
+build
+.env
+.env.*
+!.env.example
+
+# Secrets — private keys, certificates, etc.
+keys/*
+!keys/.gitkeep
+!keys/README.md
+
+# User-uploaded files (swap for S3 in prod)
+uploads/
+
+# Infra/runbook docs that contain credentials & resource secrets — never commit
+aws setup.md
+AWS_SETUP.md
+
+# Local setup artifacts (downloaded / generated — not source)
+.DS_Store
+global-bundle.pem
+AWS_Hosting_Guide.xlsx
+scripts/build_aws_checklist.py
+
+# Local private keys (never commit)
+server.key
+server.crt
+.claude/settings.local.json
+.env.example
