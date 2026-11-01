@@ -30,7 +30,6 @@ jobs:
         run: |
           docker build --platform linux/amd64 -t "$IMAGE:${{ github.sha }}" -t "$IMAGE:latest" .
           docker push "$IMAGE:${{ github.sha }}"
+          # App Runner auto-deploys when :latest is pushed to ECR
           docker push "$IMAGE:latest"
 
-      - name: Trigger App Runner deployment
-        run: aws apprunner start-deployment --service-arn "${{ vars.APPRUNNER_SERVICE_ARN }}"
