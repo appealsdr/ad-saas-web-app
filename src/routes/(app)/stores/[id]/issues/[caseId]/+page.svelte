@@ -126,8 +126,6 @@
 
 	// ── Estimated Revenue at Risk — Case.Estimated_Revenue_at_Risk__c ──
 	$: revenueAtRisk = data.case.estimatedRevenueAtRisk ?? 0;
-	// ── Store Total Saved — Store__c.Total_Revenue_Recovered__c ──
-	$: storeTotalSaved = data.storeTotalSaved ?? 0;
 
 	// ── Required-file rollup ──
 	$: uploadedFiles = data.requiredFiles.filter((f) => f.uploaded);
@@ -192,52 +190,43 @@
 	{#if form?.uploadSuccess}<div class="alert alert-success" style="margin-bottom:14px">{form.uploadSuccess}</div>{/if}
 	{#if form?.uploadError}<div class="alert alert-error" style="margin-bottom:14px">{form.uploadError}</div>{/if}
 
-	<div class="case-detail-grid">
-		<!-- ═══════════════════ LEFT COLUMN ═══════════════════ -->
-		<div>
-			<!-- ── Case Details card ────────────────────────────── -->
-			<div class="card" style="margin-bottom:16px">
-				<div class="card-title">
-					Case Details
-					<span class={`badge ${badgeClass(data.case.Status)}`}>{data.case.Status}</span>
-				</div>
-				<div class="fields-2col">
-					<div class="field-block">
-						<div class="field-label">Case ID</div>
-						<div class="field-value mono">{data.case.CaseNumber}</div>
-					</div>
-					<div class="field-block">
-						<div class="field-label">Service Type</div>
-						<div class="field-value">{data.case.recordTypeName ?? '—'}</div>
-					</div>
-					<div class="field-block">
-						<div class="field-label">Store</div>
-						<div class="field-value">
-							<a href={`/stores/${data.storeId}`}>{data.storeName}</a>
-						</div>
-					</div>
-					<div class="field-block">
-						<div class="field-label">Marketplace</div>
-						<div class="field-value">
-							{data.storeMarketplaces?.split(';').join(', ') ?? '—'}
-						</div>
-					</div>
-					<div class="field-block">
-						<div class="field-label">Opened On</div>
-						<div class="field-value">{fmtDate(data.case.CreatedDate)}</div>
-					</div>
-					<div class="field-block">
-						<div class="field-label">Priority</div>
-						<div class="field-value">{data.case.Priority ?? '—'}</div>
-					</div>
-				</div>
-				{#if isWaitingOnClient(data.case.Status) && pendingFiles.length > 0}
-					<div class="alert alert-warn" style="margin-top:14px;margin-bottom:0">
-						⚠️ Action required: Please upload the requested documents to proceed.
-					</div>
-				{/if}
+	<section class="hero">
+		<div class="hero-main">
+			<div class="hero-title-row">
+				<h1 class="hero-title">{data.case.Subject ?? data.case.recordTypeName ?? data.case.CaseNumber}</h1>
+				<span class={`badge ${badgeClass(data.case.Status)}`}>{data.case.Status}</span>
 			</div>
+			<div class="hero-meta">
+				{#if data.case.asin}
+					<span>ASIN</span>
+					<span class="asin-chip">{data.case.asin}</span>
+				{/if}
+				<span>
+					{data.storeMarketplaces?.split(';').join(', ') ?? '—'} · Opened {fmtDate(data.case.CreatedDate)} · Priority {data.case.Priority ?? '—'}
+				</span>
+			</div>
+			<div class="hero-progress">
+				<div class="progress-segs">
+					{#each data.requiredFiles as f (f.id)}
+						<span class="progress-seg" class:done={f.uploaded} title={f.name}></span>
+					{/each}
+				</div>
+				<span class="hero-meta">{uploadedFiles.length} of {data.requiredFiles.length} files submitted</span>
+			</div>
+			{#if isWaitingOnClient(data.case.Status) && pendingFiles.length > 0}
+				<div class="alert alert-warn" style="margin:0">
+					⚠️ Action required: Please upload the requested documents to proceed.
+				</div>
+			{/if}
+		</div>
+		<div class="rev-box">
+			<div class="rev-label">Estimated Revenue at Risk</div>
+			<div class="rev-amount">${revenueAtRisk.toLocaleString()}</div>
+		</div>
+	</section>
 
+	<div class="case-detail-grid">
+		<div class="grid-col">
 			<!-- ── Comments & Updates card ──────────────────────── -->
 			<div class="card msg-card">
 				<div class="msg-head">
@@ -367,59 +356,10 @@
 			</div>
 		</div>
 
-		<!-- ═══════════════════ RIGHT COLUMN (360px) ═══════════════════ -->
-		<div>
-			<!-- ── Financial card ─────────────────────────────────── -->
-			<div class="fin-card">
-				<div class="fin-label">Estimated Revenue at Risk</div>
-				<div class="fin-amount">${revenueAtRisk.toLocaleString()}</div>
-				<div class="fin-sub">Potential recovery if resolved successfully</div>
-				<div class="fin-row">
-					<div class="fin-item">
-						<div class="fin-item-val">${storeTotalSaved.toLocaleString()}</div>
-						<div class="fin-item-lbl">Store Total Saved</div>
-					</div>
-					<div class="fin-item">
-						<div class="fin-item-val">{uploadedFiles.length}/{data.requiredFiles.length}</div>
-						<div class="fin-item-lbl">Files Submitted</div>
-					</div>
-				</div>
-				<div style="margin-top:14px;padding-top:12px;border-top:1px solid rgba(255,255,255,.1)">
-					<div style="font-size:11px;color:rgba(255,255,255,.45);text-transform:uppercase;letter-spacing:.04em;margin-bottom:6px">
-						ASIN
-					</div>
-					{#if data.case.asin}
-						<div style="font-family:ui-monospace,monospace;font-size:13px;margin-bottom:10px">{data.case.asin}</div>
-					{:else}
-						<div style="font-size:12px;color:rgba(255,255,255,.5);margin-bottom:10px">Not set on this case</div>
-					{/if}
-					<form
-						method="POST"
-						action="?/recalculate_revenue_at_risk"
-						use:enhance={() => {
-							recalculating = true;
-							return async ({ update }) => {
-								await update();
-								recalculating = false;
-							};
-						}}
-					>
-						<button
-							class="btn-sm btn-outline"
-							type="submit"
-							disabled={recalculating || !data.case.asin}
-							style="display:none;width:100%;color:white;border-color:rgba(255,255,255,.3)"
-						>
-							{recalculating ? 'Recalculating…' : 'Recalculate from Amazon sales'}
-						</button>
-					</form>
-				</div>
-			</div>
-
-			<CaseTimeline events={data.timeline} historyError={data.historyError} />
-
+		<!-- ═══════════════════ RIGHT COLUMN ═══════════════════ -->
+		<div class="grid-col">
 			<!-- ── Case Documents card (required-file checklist) ── -->
-			<div class="card" style="margin-bottom:14px">
+			<div class="card docs-card">
 				<div class="card-title">
 					Case Documents
 					<span style="font-size:11px;font-weight:500;color:var(--grey-text)">
@@ -436,6 +376,9 @@
 						files={data.requiredFiles}
 						uploadAction="?/upload_doc"
 						clearAction="?/clear_doc"
+						multiple
+						previewLimit={2}
+						contextLabel={`Case ${data.case.CaseNumber}`}
 						buildDownloadUrl={(docId) => `/api/cases/${data.case.Id}/documents/${docId}`}
 						uploadError={form?.uploadError ?? null}
 					/>
@@ -443,6 +386,8 @@
 			</div>
 		</div>
 	</div>
+
+	<CaseTimeline events={data.timeline} historyError={data.historyError} />
 </div>
 
 {#if showMessageModal && selectedMessage}
@@ -511,9 +456,43 @@
 
 	/* ── Two-column grid (from mockup) ───────────────────────── */
 	.case-detail-grid {
-		display: grid; grid-template-columns: 1fr 360px;
-		gap: 20px; align-items: start;
+		display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(320px, 1fr);
+		gap: 20px; align-items: stretch; margin-bottom: 20px;
 	}
+	.grid-col { min-width: 0; }
+	@media (max-width: 900px) { .case-detail-grid { grid-template-columns: 1fr; } }
+
+	/* ── Breadcrumb + hero (Case Detail reference) ───────────── */
+	.hero {
+		background: white; border: 1px solid var(--grey-line); border-radius: var(--radius);
+		padding: 20px 22px; display: flex; gap: 20px; align-items: center;
+		justify-content: space-between; margin-bottom: 16px;
+	}
+	.hero-main { display: flex; flex-direction: column; gap: 10px; flex: 1 1 0; min-width: 0; }
+	.hero-title-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+	.hero-title { margin: 0; font-size: 21px; line-height: 1.3; font-weight: 700; color: var(--navy); text-wrap: pretty; }
+	.hero-meta {
+		display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+		font-size: 13px; color: var(--grey-text);
+	}
+	.asin-chip {
+		font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px;
+		background: var(--grey-bg); border: 1px solid var(--grey-line);
+		padding: 2px 8px; border-radius: 6px; color: var(--navy);
+	}
+	.hero-progress { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+	.progress-segs { display: flex; gap: 4px; }
+	.progress-seg { width: 34px; height: 6px; border-radius: 3px; background: var(--grey-line); }
+	.progress-seg.done { background: var(--green); }
+	.rev-box {
+		background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+		border-radius: 10px; padding: 10px 16px; color: white;
+		flex: 0 0 auto; margin-left: auto; text-align: right; align-self: flex-start;
+	}
+	.rev-label { font-size: 11px; color: rgba(255,255,255,.55); }
+	.rev-amount { font-size: 20px; font-weight: 800; color: var(--orange); line-height: 1.2; }
+	.docs-card { height: 560px; display: flex; flex-direction: column; overflow: hidden; margin-bottom: 0; }
+	.docs-card :global(.required-files), .docs-card > :global(:last-child) { min-height: 0; overflow-y: auto; }
 
 	.card {
 		background: white; border: 1px solid var(--grey-line);
@@ -563,7 +542,7 @@
 	.msg-card {
 		display: flex;
 		flex-direction: column;
-		height: 520px;
+		height: 560px;
 		padding: 0;
 		overflow: hidden;
 	}
@@ -707,26 +686,6 @@
 		margin: 4px 0; padding-left: 22px;
 	}
 	.msg-modal-foot { padding: 12px 18px; border-top: 1px solid var(--grey-line); display: flex; justify-content: flex-end; gap: 8px; }
-
-	/* ── Financial card ──────────────────────────────────────── */
-	.fin-card {
-		background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
-		border-radius: var(--radius); padding: 18px;
-		color: white; margin-bottom: 14px;
-	}
-	.fin-label { font-size: 11px; color: rgba(255,255,255,.55); margin-bottom: 4px; }
-	.fin-amount { font-size: 30px; font-weight: 800; color: var(--orange); }
-	.fin-sub { font-size: 11px; color: rgba(255,255,255,.4); margin-top: 3px; }
-	.fin-row {
-		display: flex; gap: 14px; margin-top: 12px; padding-top: 12px;
-		border-top: 1px solid rgba(255,255,255,.1);
-	}
-	.fin-item { flex: 1; text-align: center; }
-	.fin-item-val { font-size: 16px; font-weight: 700; }
-	.fin-item-lbl {
-		font-size: 10px; color: rgba(255,255,255,.45); text-transform: uppercase;
-		letter-spacing: .04em; margin-top: 2px;
-	}
 
 	/* ── Documents (mockup-style doc-item) ───────────────────── */
 	.doc-item {
