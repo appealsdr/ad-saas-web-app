@@ -11,10 +11,11 @@
  * Actions:
  *   post_comment  — INSERT Case_Message__c (Sender_Contact__c, Message_Body__c,
  *                                           Sender_Type__c='external')
- *   upload_doc    — for ONE required file slot: PUT to S3 → UPSERT local row
- *                   → PATCH Case_File__c.Client_File_Info__c = s3://<bucket>/<key>
- *                   Re-upload UPSERTs the same row + deletes the old S3 object.
- *   clear_doc     — reverse: DELETE S3 + local row + clear SF Client_File_Info__c
+ *   upload_doc    — for ONE required file slot, one or many files: each is PUT to
+ *                   S3 → INSERTed as a local row → registered as an S3_Document__c
+ *                   (the newest becomes Required_File__c.Last_Version__c).
+ *   clear_doc     — remove one file (docId) or, without docId, every file in the
+ *                   slot. When the slot ends up empty, Required_File__c is reset.
  */
 import { fail, redirect, error } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
@@ -71,6 +72,12 @@ function daysAtRiskFor(caseType: string | null, recordTypeName: string | null): 
 }
 
 const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
+const MAX_FILES_PER_UPLOAD = 10;
+
+/** Prefix an upload error with the files that already went through in this batch. */
+function uploadedSummary(done: string[], message: string): string {
+	return done.length ? `${done.length} file(s) uploaded (${done.join(', ')}). ${message}` : message;
+}
 const ALLOWED_MIME = new Set([
 	'application/pdf',
 	'image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/heic',
@@ -154,11 +161,18 @@ export const load: PageServerLoad = async ({ params, locals }) => {
 
 	// Join Required_File__c rows with local upload metadata by the required-file
 	// id (stored in the legacy sfdc_case_file_id column of the mirror table).
-	const localByReqId = new Map<string, LocalUploadRow>();
-	for (const u of uploads) localByReqId.set(u.sfdc_case_file_id, u);
+	const localByReqId = new Map<string, LocalUploadRow[]>();
+	for (const u of uploads) {
+		const list = localByReqId.get(u.sfdc_case_file_id) ?? [];
+		list.push(u);
+		localByReqId.set(u.sfdc_case_file_id, list);
+	}
 
 	const requiredFiles = (filesResult.ok ? filesResult.files : []).map((f) => {
-		const local = localByReqId.get(f.id) ?? null;
+		const localList = (localByReqId.get(f.id) ?? []).sort(
+			(a, b) => b.created_at.getTime() - a.created_at.getTime()
+		);
+		const local = localList[0] ?? null;
 		const uploaded = f.uploaded || !!local;
 		return {
 			id: f.id,
@@ -179,6 +193,15 @@ export const load: PageServerLoad = async ({ params, locals }) => {
 						createdAt: local?.created_at.toISOString() ?? f.upload?.uploadedDate ?? null
 					}
 				: null,
+			uploads: localList.map((u) => ({
+				localDocId: u.id,
+				s3DocumentId: null as string | null,
+				fileName: u.original_name,
+				fileExtension: null as string | null,
+				contentType: u.mime_type,
+				sizeBytes: Number(u.size_bytes),
+				createdAt: u.created_at.toISOString()
+			})),
 			example: f.example
 				? {
 						s3DocumentId: f.example.s3DocumentId,
@@ -345,128 +368,136 @@ export const actions: Actions = {
 		if (!store) throw error(404, 'Store not found.');
 
 		const data = await request.formData();
-		const file = data.get('file');
+		const files = data.getAll('file').filter((f): f is File => f instanceof File && f.size > 0);
 		const requiredFileId = String(data.get('requiredFileId') ?? '').trim();
+		// "New version" — the file this upload replaces; removed once the new one is stored.
+		const replaceDocId = String(data.get('replaceDocId') ?? '').trim() || null;
 
 		if (!requiredFileId) return fail(400, { uploadError: 'Missing required file.' });
-		if (!(file instanceof File) || file.size === 0) {
-			return fail(400, { uploadError: 'Pick a file to upload.' });
+		if (files.length === 0) return fail(400, { uploadError: 'Pick a file to upload.' });
+		if (files.length > MAX_FILES_PER_UPLOAD) {
+			return fail(400, { uploadError: `Upload at most ${MAX_FILES_PER_UPLOAD} files at a time.` });
 		}
-		if (file.size > MAX_UPLOAD_BYTES) {
-			return fail(400, { uploadError: `File too large (max ${MAX_UPLOAD_BYTES / 1024 / 1024} MB).` });
-		}
-		if (file.type && !ALLOWED_MIME.has(file.type)) {
-			return fail(400, { uploadError: `Unsupported file type: ${file.type}` });
+		// Validate everything up front so a bad file doesn't leave a partial batch.
+		for (const file of files) {
+			if (file.size > MAX_UPLOAD_BYTES) {
+				return fail(400, {
+					uploadError: `${file.name} is too large (max ${MAX_UPLOAD_BYTES / 1024 / 1024} MB).`
+				});
+			}
+			if (file.type && !ALLOWED_MIME.has(file.type)) {
+				return fail(400, { uploadError: `Unsupported file type for ${file.name}: ${file.type}` });
+			}
 		}
 
-		// 1. Push new bytes to S3. Old key (if any) is deleted at the end so a
-		//    failure mid-upload leaves the prior successful upload intact.
-		const newDocId = randomUUID();
-		const cleanName = safeFilename(file.name);
-		const s3Key = caseFileKey({
-			accountId: store.account_id,
-			storeId: store.id,
-			sfdcCaseId: params.caseId,
-			docId: newDocId,
-			filename: cleanName
-		});
-		const buffer = Buffer.from(await file.arrayBuffer());
+		const uploaded: string[] = [];
+		const sfIssues: string[] = [];
 
-		let bucket: string;
-		try {
-			const result = await putObject(s3Key, buffer, file.type || undefined);
-			bucket = result.bucket;
-		} catch (e) {
-			const desc = describeError(e);
-			await logError({
-				source: 'cases.upload_doc',
-				operation: 's3_put',
-				userId: locals.user.id,
+		for (const file of files) {
+			// 1. Push the bytes to S3.
+			const newDocId = randomUUID();
+			const s3Key = caseFileKey({
 				accountId: store.account_id,
-				errorMessage: desc.errorMessage,
-				stack: desc.stack,
-				context: { caseId: params.caseId, requiredFileId, s3Key }
+				storeId: store.id,
+				sfdcCaseId: params.caseId,
+				docId: newDocId,
+				filename: safeFilename(file.name)
 			});
-			return fail(502, { uploadError: 'Could not upload to S3. Check AWS credentials and bucket access.' });
+			const buffer = Buffer.from(await file.arrayBuffer());
+
+			let bucket: string;
+			try {
+				bucket = (await putObject(s3Key, buffer, file.type || undefined)).bucket;
+			} catch (e) {
+				const desc = describeError(e);
+				await logError({
+					source: 'cases.upload_doc',
+					operation: 's3_put',
+					userId: locals.user.id,
+					accountId: store.account_id,
+					errorMessage: desc.errorMessage,
+					stack: desc.stack,
+					context: { caseId: params.caseId, requiredFileId, s3Key }
+				});
+				return fail(502, {
+					uploadError: uploadedSummary(uploaded, 'Could not upload to S3. Check AWS credentials and bucket access.')
+				});
+			}
+
+			// 2. Local mirror row — one per file, several per slot.
+			try {
+				await sql`
+					INSERT INTO case_documents (
+						id, store_id, sfdc_case_id, sfdc_case_file_id, uploaded_by,
+						original_name, s3_bucket, s3_key, mime_type, size_bytes
+					)
+					VALUES (
+						${newDocId}, ${store.id}, ${params.caseId}, ${requiredFileId}, ${locals.user.id},
+						${file.name}, ${bucket}, ${s3Key}, ${file.type || null}, ${file.size}
+					)
+				`;
+			} catch (e) {
+				await deleteObject(s3Key); // roll back this file's S3 write
+				const desc = describeError(e);
+				await logError({
+					source: 'cases.upload_doc',
+					operation: 'insert_row',
+					userId: locals.user.id,
+					accountId: store.account_id,
+					errorMessage: desc.errorMessage,
+					stack: desc.stack,
+					context: { caseId: params.caseId, requiredFileId, s3Key }
+				});
+				return fail(500, {
+					uploadError: uploadedSummary(uploaded, `Uploaded ${file.name} but could not index it.`)
+				});
+			}
+
+			// 3. Register S3_Document__c (Related_Record_Id__c = Case Id); the newest
+			//    file in the batch ends up as Required_File__c.Last_Version__c.
+			const sfResult = await attachUploadToRequiredFile(
+				{
+					requiredFileId,
+					relatedRecordId: params.caseId,
+					relatedObjectType: 'Case',
+					bucket,
+					key: s3Key,
+					region: getRegion(),
+					fileName: file.name,
+					contentType: file.type || null,
+					sizeBytes: file.size
+				},
+				{ userId: locals.user.id, accountId: store.account_id }
+			);
+			uploaded.push(file.name);
+			if (!sfResult.ok) sfIssues.push(`${file.name}: ${sfResult.error}`);
 		}
 
-		// 2. UPSERT local mirror row by the required-file id (sfdc_case_file_id
-		//    column). Capture any prior s3_key for cleanup.
-		let oldS3Key: string | null = null;
-		try {
-			const prior = await sql<{ s3_key: string | null }[]>`
-				SELECT s3_key FROM case_documents
-				WHERE sfdc_case_file_id = ${requiredFileId} LIMIT 1
+		if (replaceDocId) {
+			const old = await sql<{ s3_key: string }[]>`
+				DELETE FROM case_documents
+				WHERE id = ${replaceDocId}
+				  AND sfdc_case_file_id = ${requiredFileId}
+				  AND store_id = ${store.id}
+				RETURNING s3_key
 			`;
-			oldS3Key = prior[0]?.s3_key ?? null;
-
-			await sql`
-				INSERT INTO case_documents (
-					id, store_id, sfdc_case_id, sfdc_case_file_id, uploaded_by,
-					original_name, s3_bucket, s3_key, mime_type, size_bytes
-				)
-				VALUES (
-					${newDocId}, ${store.id}, ${params.caseId}, ${requiredFileId}, ${locals.user.id},
-					${file.name}, ${bucket}, ${s3Key}, ${file.type || null}, ${file.size}
-				)
-				ON CONFLICT (sfdc_case_file_id) WHERE sfdc_case_file_id IS NOT NULL
-				DO UPDATE SET
-					id = EXCLUDED.id,
-					uploaded_by = EXCLUDED.uploaded_by,
-					original_name = EXCLUDED.original_name,
-					s3_bucket = EXCLUDED.s3_bucket,
-					s3_key = EXCLUDED.s3_key,
-					mime_type = EXCLUDED.mime_type,
-					size_bytes = EXCLUDED.size_bytes,
-					created_at = now()
-			`;
-		} catch (e) {
-			await deleteObject(s3Key); // roll back the new S3 write
-			const desc = describeError(e);
-			await logError({
-				source: 'cases.upload_doc',
-				operation: 'upsert_row',
-				userId: locals.user.id,
-				accountId: store.account_id,
-				errorMessage: desc.errorMessage,
-				stack: desc.stack,
-				context: { caseId: params.caseId, requiredFileId, s3Key }
-			});
-			return fail(500, { uploadError: 'Uploaded the file but could not index it.' });
+			if (old[0]?.s3_key) await deleteObject(old[0].s3_key);
 		}
 
-		// 3. Create S3_Document__c (Related_Record_Id__c = Case Id) and point the
-		//    Required_File__c at it (Last_Version__c + File_Uploaded__c = true).
-		const sfResult = await attachUploadToRequiredFile(
-			{
-				requiredFileId,
-				relatedRecordId: params.caseId,
-				relatedObjectType: 'Case',
-				bucket,
-				key: s3Key,
-				region: getRegion(),
-				fileName: file.name,
-				contentType: file.type || null,
-				sizeBytes: file.size
-			},
-			{ userId: locals.user.id, accountId: store.account_id }
-		);
-
-		// 4. Best-effort cleanup of any prior S3 object for this slot.
-		if (oldS3Key && oldS3Key !== s3Key) await deleteObject(oldS3Key);
-
-		if (!sfResult.ok) {
+		const label = uploaded.length === 1 ? uploaded[0] : `${uploaded.length} files`;
+		if (sfIssues.length) {
 			return {
-				uploadSuccess: `Uploaded ${file.name}, but Salesforce sync had an issue: ${sfResult.error}.`
+				uploadSuccess: `Uploaded ${label}, but Salesforce sync had an issue: ${sfIssues.join('; ')}.`
 			};
 		}
-		return { uploadSuccess: `Uploaded ${file.name}.` };
+		return { uploadSuccess: `Uploaded ${label}.` };
 	},
 
 	/**
-	 * Clear the upload for one Required_File__c slot: drop S3 object + local row,
-	 * unset Last_Version__c / File_Uploaded__c, tombstone the old S3_Document__c.
-	 * Body: { requiredFileId, s3DocumentId }.
+	 * Remove uploads from one Required_File__c slot. With `docId`, only that file
+	 * goes; without it, every file in the slot. Once the slot has no files left,
+	 * Last_Version__c / File_Uploaded__c are reset and the S3_Document__c tombstoned.
+	 * Body: { requiredFileId, s3DocumentId, docId? }.
 	 */
 	clear_doc: async ({ request, params, locals }) => {
 		if (!locals.user) throw redirect(303, '/login');
@@ -476,20 +507,36 @@ export const actions: Actions = {
 		const data = await request.formData();
 		const requiredFileId = String(data.get('requiredFileId') ?? '').trim();
 		const s3DocumentId = String(data.get('s3DocumentId') ?? '').trim() || null;
+		const docId = String(data.get('docId') ?? '').trim() || null;
 		if (!requiredFileId) return fail(400, { uploadError: 'Missing required file.' });
 
-		const rows = await sql<{ s3_key: string }[]>`
-			DELETE FROM case_documents
-			WHERE sfdc_case_file_id = ${requiredFileId}
-			  AND store_id = ${store.id}
-			RETURNING s3_key
-		`;
-		if (rows[0]?.s3_key) await deleteObject(rows[0].s3_key);
+		const rows = docId
+			? await sql<{ s3_key: string }[]>`
+					DELETE FROM case_documents
+					WHERE id = ${docId}
+					  AND sfdc_case_file_id = ${requiredFileId}
+					  AND store_id = ${store.id}
+					RETURNING s3_key
+				`
+			: await sql<{ s3_key: string }[]>`
+					DELETE FROM case_documents
+					WHERE sfdc_case_file_id = ${requiredFileId}
+					  AND store_id = ${store.id}
+					RETURNING s3_key
+				`;
+		for (const r of rows) if (r.s3_key) await deleteObject(r.s3_key);
 
-		await clearRequiredFile(requiredFileId, s3DocumentId, {
-			userId: locals.user.id,
-			accountId: store.account_id
-		});
-		return { uploadSuccess: 'Upload cleared. Slot is pending again.' };
+		const [{ count }] = await sql<{ count: number }[]>`
+			SELECT count(*)::int AS count FROM case_documents
+			WHERE sfdc_case_file_id = ${requiredFileId} AND store_id = ${store.id}
+		`;
+		if (count === 0) {
+			await clearRequiredFile(requiredFileId, s3DocumentId, {
+				userId: locals.user.id,
+				accountId: store.account_id
+			});
+			return { uploadSuccess: 'Upload cleared. Slot is pending again.' };
+		}
+		return { uploadSuccess: 'File removed.' };
 	}
 };
