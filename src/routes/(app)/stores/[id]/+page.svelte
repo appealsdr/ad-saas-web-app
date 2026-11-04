@@ -315,6 +315,7 @@
 						files={data.requiredFiles}
 						uploadAction="?/upload_doc"
 						clearAction="?/clear_doc"
+						multiple
 						buildDownloadUrl={(docId) => `/api/stores/${data.store.id}/documents/${docId}`}
 						uploadError={form?.uploadError ?? null}
 					/>
