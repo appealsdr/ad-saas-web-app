@@ -58,12 +58,15 @@ export type { AccountContactInput, AccountContactResult, SyncContext } from './s
 export {
 	listServices,
 	listSubscriptions,
+	listRecurring,
 	getCatalogProduct,
+	parseRecurringOptions,
+	RECURRING_TERMS,
 	dueNow,
 	balanceLater,
 	invalidatePricebookCache
 } from './pricebook';
-export type { CatalogProduct, CatalogCategory } from './pricebook';
+export type { CatalogProduct, CatalogCategory, RecurringOptions, RecurringPayOption } from './pricebook';
 
 export {
 	fetchSalesforceAccount,

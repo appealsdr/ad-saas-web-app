@@ -110,6 +110,17 @@
 				</div>
 			{/if}
 
+			{#if data.recurring}
+				<div class="split-banner" role="note">
+					<strong>Recurring order — {data.recurring.termMonths} month{data.recurring.termMonths === 1 ? '' : 's'}, {data.recurring.payOption === 'full' ? 'paid in full' : 'paid by month'}.</strong>
+					{#if data.recurring.payOption === 'full'}
+						You pay <strong>{formatPrice(data.dueFirst, data.currency)}</strong> today (quantity × price × term).
+					{:else}
+						Only the first month, <strong>{formatPrice(data.dueFirst, data.currency)}</strong>, is charged today. The remaining <strong>{formatPrice(data.dueLater, data.currency)}</strong> is tracked as pending payments on your service contract.
+					{/if}
+				</div>
+			{/if}
+
 			{#if data.selectedStore}
 				<div class="for-store">
 					Service contract will be created for store:
