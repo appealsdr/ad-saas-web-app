@@ -8,14 +8,18 @@
  */
 import { redirect, error } from '@sveltejs/kit';
 import type { PageServerLoad } from './$types';
-import { getCatalogProduct, dueNow, balanceLater, type CatalogProduct } from '$lib/server/salesforce';
+import { getCatalogProduct, parseRecurringOptions, dueNow, balanceLater, type CatalogProduct } from '$lib/server/salesforce';
 import { sql } from '$lib/server/db';
 
 export const load: PageServerLoad = async ({ url, locals }) => {
 	if (!locals.user) throw redirect(303, '/login');
 
-	const kind: 'service' | 'subscription' =
-		url.searchParams.get('kind') === 'subscription' ? 'subscription' : 'service';
+	const kindParam = url.searchParams.get('kind');
+	const kind: 'service' | 'subscription' | 'recurring' =
+		kindParam === 'subscription' ? 'subscription' : kindParam === 'recurring' ? 'recurring' : 'service';
+	// Recurring products: term (months) + payment option (full | monthly) come with the selection.
+	const recurring = kind === 'recurring' ? parseRecurringOptions(url.searchParams.get('term'), url.searchParams.get('pay')) : null;
+	if (kind === 'recurring' && !recurring) throw error(400, 'Choose a valid term and payment option.');
 
 	// NOT deduped: the same service can be purchased more than once in one
 	// order (e.g. the same service line for several locations) — each
@@ -27,7 +31,7 @@ export const load: PageServerLoad = async ({ url, locals }) => {
 		throw error(400, 'Only one subscription plan can be selected at a time.');
 	}
 
-	const products = await Promise.all(ids.map((id) => getCatalogProduct(id, kind)));
+	const products = await Promise.all(ids.map((id) => getCatalogProduct(id, kind, recurring)));
 	const items: CatalogProduct[] = [];
 	const missing: string[] = [];
 	products.forEach((p, i) => {
@@ -74,5 +78,5 @@ export const load: PageServerLoad = async ({ url, locals }) => {
 	const dueFirst = Math.round(items.reduce((s, p) => s + dueNow(p), 0) * 100) / 100;
 	const split = items.some((p) => p.paymentType === 'Deposit');
 
-	return { items: groupedItems, missing, total, currency, selectedStore, kind, split, dueFirst, dueLater: Math.round(items.reduce((s, p) => s + balanceLater(p), 0) * 100) / 100 };
+	return { recurring, items: groupedItems, missing, total, currency, selectedStore, kind, split, dueFirst, dueLater: Math.round(items.reduce((s, p) => s + balanceLater(p), 0) * 100) / 100 };
 };

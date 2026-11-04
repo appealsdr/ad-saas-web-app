@@ -7,7 +7,7 @@
  *   ContactId    (standard lookup)  — local users.sfdc_contact_id
  *   Store__c     (custom lookup)    — local stores.sfdc_store_id
  *   Name                            — "<Store Name> <YYYY-MM-DD> Services"
- *   StartDate                       — PaymentIntent.created
+ *   StartDate                       — when the first payment was received (Stripe charge time; subscriptions: activation)
  *   EndDate                         — StartDate + Term months
  *   Term                            — 3
  *   Pricebook2Id                    — SERVICE pricebook
@@ -43,7 +43,7 @@ export interface ServiceContractInput {
 	 * plan). Cases are only auto-created for 'service' — a subscription's Cases
 	 * are opened manually by technicians in Salesforce, not by this app.
 	 */
-	kind: 'service' | 'subscription';
+	kind: 'service' | 'subscription' | 'recurring';
 	sfdcAccountId: string;
 	sfdcContactId: string | null;
 	sfdcStoreId: string | null;
@@ -61,7 +61,7 @@ export interface ServiceContractInput {
 	};
 	lineItems: Array<{
 		pricebookEntryId: string;
-		quantity: number;
+		quantity: number;                // recurring: the term in months (UnitPrice is then the monthly price)
 		unitPrice: number;
 		name: string;                    // service name → Case.Subject
 		/**

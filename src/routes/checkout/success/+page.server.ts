@@ -19,6 +19,7 @@ import { getStripe } from '$lib/server/stripe';
 import { sql } from '$lib/server/db';
 import {
 	getCatalogProduct,
+	parseRecurringOptions,
 	balanceLater,
 	createServiceContractWithLines,
 	cancelServiceContract,
@@ -36,22 +37,30 @@ const SUBSCRIPTION_TERM_MONTHS = 12;
 interface PaymentSnapshot {
 	pi: import('stripe').Stripe.PaymentIntent;
 	products: CatalogProduct[];
-	kind: 'service' | 'subscription';
+	kind: 'service' | 'subscription' | 'recurring';
+	/** When the first payment was actually received (charge time) — becomes the contract StartDate. */
+	paymentReceivedAt: Date;
+	/** Recurring only: the term the customer picked (months) → ServiceContract.Term. */
+	recurringTermMonths: number | null;
 }
 
 async function snapshotPaymentIntent(piId: string): Promise<PaymentSnapshot> {
-	const pi = await getStripe().paymentIntents.retrieve(piId);
-	const kind: 'service' | 'subscription' = pi.metadata?.kind === 'subscription' ? 'subscription' : 'service';
+	const pi = await getStripe().paymentIntents.retrieve(piId, { expand: ['latest_charge'] });
+	const kind: 'service' | 'subscription' | 'recurring' =
+		pi.metadata?.kind === 'subscription' ? 'subscription' : pi.metadata?.kind === 'recurring' ? 'recurring' : 'service';
+	// Term / payment option were set server-side when the PaymentIntent was created.
+	const recurring = kind === 'recurring' ? parseRecurringOptions(pi.metadata?.term_months, pi.metadata?.pay_option) : null;
 	const entryIds = (pi.metadata?.pricebook_entry_ids ?? '')
 		.split(',')
 		.map((s) => s.trim())
 		.filter(Boolean);
 	const products: CatalogProduct[] = [];
 	for (const id of entryIds) {
-		const p = await getCatalogProduct(id, kind);
+		const p = await getCatalogProduct(id, kind, recurring);
 		if (p) products.push(p);
 	}
-	return { pi, products, kind };
+	const charge = typeof pi.latest_charge === 'object' && pi.latest_charge ? pi.latest_charge : null;
+	return { pi, products, kind, paymentReceivedAt: new Date((charge?.created ?? pi.created) * 1000), recurringTermMonths: recurring?.termMonths ?? null };
 }
 
 /**
@@ -75,7 +84,15 @@ async function persistContract(
 	locals: App.Locals
 ): Promise<{ localContractId: string | null; syncStatus: string; syncError?: string }> {
 	const { pi, products, kind } = snapshot;
-	const termMonths = kind === 'subscription' ? SUBSCRIPTION_TERM_MONTHS : SERVICE_TERM_MONTHS;
+	const termMonths =
+		kind === 'subscription'
+			? SUBSCRIPTION_TERM_MONTHS
+			: kind === 'recurring'
+				? (snapshot.recurringTermMonths ?? 0)
+				: SERVICE_TERM_MONTHS;
+	if (kind === 'recurring' && termMonths < 1) {
+		return { localContractId: null, syncStatus: 'failed', syncError: 'Missing recurring term.' };
+	}
 	if (await hasLocalContract(pi.id)) {
 		return { localContractId: null, syncStatus: 'already-exists' };
 	}
@@ -126,14 +143,14 @@ async function persistContract(
 		storeRow = rows[0] ?? null;
 	}
 
-	const paidAt = new Date(pi.created * 1000);
-	const startDate = paidAt;                                                  // purchase date
+	const paidAt = snapshot.paymentReceivedAt;
+	const startDate = paidAt;                                                  // StartDate = when the first payment was received
 	const endDate = new Date(paidAt.getTime());
 	endDate.setUTCMonth(endDate.getUTCMonth() + termMonths);
 
 	const amountCents = pi.amount;
 	const currency = (pi.currency || 'usd').toUpperCase();
-	const chargeId = typeof pi.latest_charge === 'string' ? pi.latest_charge : null;
+	const chargeId = typeof pi.latest_charge === 'string' ? pi.latest_charge : (pi.latest_charge?.id ?? null);
 	const paymentMethodId = typeof pi.payment_method === 'string' ? pi.payment_method : null;
 	const paymentMethodType = pi.payment_method_types?.[0] ?? null;
 	const pricebook2Id = products[0]?.pricebook2Id ?? null;
@@ -176,7 +193,7 @@ async function persistContract(
 					) VALUES (
 						${contract.id}, ${p.name}, ${p.description},
 						${p.category}, ${p.productId}, ${p.pricebookEntryId},
-						${p.unitPrice}, 1, ${p.currency}, ${balanceLater(p)}
+						${p.monthlyPrice ?? p.unitPrice}, ${p.termMonths ?? 1}, ${p.currency}, ${balanceLater(p)}
 					)
 				`;
 			}
@@ -222,7 +239,7 @@ async function persistContract(
 	// Name = "<Store Name> <YYYY-MM-DD> Services|Subscription" — e.g. "Amazon US 2026-06-06 Services".
 	const purchaseDateStr = startDate.toISOString().slice(0, 10);
 	const namePrefix = storeRow?.name?.trim() || 'Untitled Store';
-	const contractName = `${namePrefix} ${purchaseDateStr} ${kind === 'subscription' ? 'Subscription' : 'Services'}`;
+	const contractName = `${namePrefix} ${purchaseDateStr} ${kind === 'subscription' ? 'Subscription' : kind === 'recurring' ? 'Recurring Services' : 'Services'}`;
 
 	const sfResult = await createServiceContractWithLines(
 		{
@@ -245,8 +262,10 @@ async function persistContract(
 			},
 			lineItems: products.map((p) => ({
 				pricebookEntryId: p.pricebookEntryId,
-				quantity: 1,
-				unitPrice: p.unitPrice,
+				// Recurring: one ContractLineItem per unit, Quantity = term (months), UnitPrice = monthly price
+				// → Quantity × UnitPrice = the full term value. Cases are opened one per line (= per unit).
+				quantity: p.termMonths ?? 1,
+				unitPrice: p.monthlyPrice ?? p.unitPrice,
 				name: p.name,
 				balanceDue: balanceLater(p)
 			})),

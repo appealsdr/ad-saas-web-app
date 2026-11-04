@@ -12,7 +12,7 @@
 import { error, redirect } from '@sveltejs/kit';
 import type { PageServerLoad } from './$types';
 import { sql } from '$lib/server/db';
-import { listServices } from '$lib/server/salesforce';
+import { listServices, listRecurring, RECURRING_TERMS } from '$lib/server/salesforce';
 
 export const load: PageServerLoad = async ({ params, locals }) => {
 	if (!locals.user) throw redirect(303, '/login');
@@ -27,8 +27,9 @@ export const load: PageServerLoad = async ({ params, locals }) => {
 	`;
 	if (!store) throw error(404, 'Store not found.');
 
-	const [categories, [activePlan]] = await Promise.all([
+	const [categories, recurringCategories, [activePlan]] = await Promise.all([
 		listServices(),
+		listRecurring(),
 		sql<{ name: string | null; price: number | null; end_date: Date; cancelling: boolean }[]>`
 			SELECT scli.product_name AS name, scli.unit_price AS price, sc.end_date, (sc.cancel_requested_at IS NOT NULL) AS cancelling
 			FROM accounts a
@@ -43,6 +44,9 @@ export const load: PageServerLoad = async ({ params, locals }) => {
 
 	return {
 		categories,
+		// Empty when SFDC_PRICE_RECURRING isn't set / the price book has no entries → tab hidden.
+		recurringCategories,
+		recurringTerms: [...RECURRING_TERMS],
 		store: {
 			id: store.id,
 			name: store.name,

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { page } from '$app/stores';
 	import { onMount } from 'svelte';
 	import { loadStripe, type Stripe, type StripeElements } from '@stripe/stripe-js';
 	import { Elements, PaymentElement } from 'svelte-stripe';
@@ -37,7 +38,9 @@
 				body: JSON.stringify({
 					pricebookEntryIds: data.pricebookEntryIds,
 					storeId: data.storeId,
-					kind: data.kind
+					kind: data.kind,
+					termMonths: data.recurring?.termMonths ?? null,
+					payOption: data.recurring?.payOption ?? null
 				})
 			});
 			if (!res.ok) {
@@ -84,7 +87,7 @@
 <div class="wrap">
 	<div class="card">
 		<header>
-			<a class="back-link" href={`/checkout/summary?${data.pricebookEntryIds.map((id) => `id=${encodeURIComponent(id)}`).join('&')}`}>
+			<a class="back-link" href={`/checkout/summary?${$page.url.searchParams.toString()}`}>
 				← Back to summary
 			</a>
 			<h1>Payment</h1>

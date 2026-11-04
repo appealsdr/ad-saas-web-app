@@ -9,13 +9,16 @@
  */
 import { redirect, error } from '@sveltejs/kit';
 import type { PageServerLoad } from './$types';
-import { getCatalogProduct, dueNow, balanceLater } from '$lib/server/salesforce';
+import { getCatalogProduct, parseRecurringOptions, dueNow, balanceLater } from '$lib/server/salesforce';
 
 export const load: PageServerLoad = async ({ url, locals }) => {
 	if (!locals.user) throw redirect(303, '/login');
 
-	const kind: 'service' | 'subscription' =
-		url.searchParams.get('kind') === 'subscription' ? 'subscription' : 'service';
+	const kindParam = url.searchParams.get('kind');
+	const kind: 'service' | 'subscription' | 'recurring' =
+		kindParam === 'subscription' ? 'subscription' : kindParam === 'recurring' ? 'recurring' : 'service';
+	const recurring = kind === 'recurring' ? parseRecurringOptions(url.searchParams.get('term'), url.searchParams.get('pay')) : null;
+	if (kind === 'recurring' && !recurring) throw error(400, 'Choose a valid term and payment option.');
 
 	// NOT deduped — the same service can be bought more than once in one order.
 	const ids = url.searchParams.getAll('id').map((s) => s.trim()).filter(Boolean);
@@ -25,7 +28,7 @@ export const load: PageServerLoad = async ({ url, locals }) => {
 		throw error(400, 'Only one subscription plan can be selected at a time.');
 	}
 
-	const products = await Promise.all(ids.map((id) => getCatalogProduct(id, kind)));
+	const products = await Promise.all(ids.map((id) => getCatalogProduct(id, kind, recurring)));
 	const items = products.filter((p): p is NonNullable<typeof p> => p !== null);
 	if (items.length === 0) throw redirect(303, '/stores');
 
@@ -62,6 +65,7 @@ export const load: PageServerLoad = async ({ url, locals }) => {
 		pricebookEntryIds: items.map((p) => p.pricebookEntryId),
 		userEmail: locals.user.email,
 		storeId,
-		kind
+		kind,
+		recurring
 	};
 };

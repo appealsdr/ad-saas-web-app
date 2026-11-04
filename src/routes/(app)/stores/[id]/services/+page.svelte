@@ -5,8 +5,25 @@
 
 	export let data: PageData;
 
+	// "Recurring products" tab — only offered when the SFDC_PRICE_RECURRING price book has products.
+	$: hasRecurring = data.recurringCategories.some((c) => c.products.length > 0);
+	let tab: 'services' | 'recurring' = 'services';
+	$: isRecurring = tab === 'recurring' && hasRecurring;
+	$: activeCats = isRecurring ? data.recurringCategories : data.categories;
+	// Recurring only: contract term (→ ServiceContract.Term) and how it is paid.
+	let termMonths = 12;
+	let payOption: 'full' | 'monthly' = 'full';
+
+	function switchTab(t: 'services' | 'recurring') {
+		if (t === tab) return;
+		tab = t;
+		selectedQty = {};
+		activeCategory = 'All';
+		query = '';
+	}
+
 	// Flatten categories → rows so the table can search/filter/sort uniformly.
-	$: rows = data.categories.flatMap((cat) =>
+	$: rows = activeCats.flatMap((cat) =>
 		cat.products.map((p) => ({ ...p, categoryLabel: cat.category }))
 	);
 
@@ -22,7 +39,7 @@
 	let activeCategory = 'All';
 	const MAX_QTY = 20;
 
-	$: categoryOptions = ['All', ...new Set(data.categories.map((c) => c.category))];
+	$: categoryOptions = ['All', ...new Set(activeCats.map((c) => c.category))];
 
 	$: filtered = rows.filter((r) => {
 		if (activeCategory !== 'All' && r.categoryLabel !== activeCategory) return false;
@@ -40,7 +57,8 @@
 		.filter((r) => (selectedQty[r.pricebookEntryId] ?? 0) > 0)
 		.map((r) => ({ row: r, qty: selectedQty[r.pricebookEntryId] ?? 0 }));
 	$: totalUnits = selectedEntries.reduce((s, e) => s + e.qty, 0);
-	$: total = selectedEntries.reduce((s, e) => s + e.row.unitPrice * e.qty, 0);
+	// Recurring rows: unitPrice is the MONTHLY price per unit. Contract value = qty × price × term.
+	$: total = selectedEntries.reduce((s, e) => s + e.row.unitPrice * e.qty * (isRecurring ? termMonths : 1), 0);
 	$: currency = selectedEntries[0]?.row.currency ?? 'USD';
 
 	// Deposit products are charged in parts: Salesforce creates a First Payment
@@ -48,8 +66,12 @@
 	// per line. Nothing is split when no selected line is a Deposit product.
 	const lineDue = (e: { row: (typeof rows)[number]; qty: number }) =>
 		(e.row.paymentType === 'Deposit' && e.row.depositAmount != null ? e.row.depositAmount : e.row.unitPrice) * e.qty;
-	$: hasDeposit = selectedEntries.some((e) => e.row.paymentType === 'Deposit');
-	$: dueFirst = selectedEntries.reduce((s, e) => s + lineDue(e), 0);
+	// Recurring: pay in full → (qty × price) × term today; pay by month → only the first month (qty × price).
+	// Explicit args so Svelte re-runs the totals when term / payment option change.
+	const lineDueRec = (e: { row: (typeof rows)[number]; qty: number }, pay: string, term: number) =>
+		e.row.unitPrice * e.qty * (pay === 'full' ? term : 1);
+	$: hasDeposit = isRecurring ? false : selectedEntries.some((e) => e.row.paymentType === 'Deposit');
+	$: dueFirst = selectedEntries.reduce((s, e) => s + (isRecurring ? lineDueRec(e, payOption, termMonths) : lineDue(e)), 0);
 	$: dueLater = total - dueFirst;
 
 	$: visibleIds = filtered.map((r) => r.pricebookEntryId);
@@ -102,6 +124,11 @@
 		// Carry the store context into checkout so the resulting service
 		// contract attaches to this store automatically.
 		qs.append('store', data.store.id);
+		if (isRecurring) {
+			qs.append('kind', 'recurring');
+			qs.append('term', String(termMonths));
+			qs.append('pay', payOption);
+		}
 		goto(`/checkout/summary?${qs.toString()}`);
 	}
 
@@ -144,6 +171,32 @@
 				Subscribe for ongoing monitoring and AI assistants for this store.
 			</div>
 			<a class="btn btn-primary btn-sm" href={'/accounts/subscription'}>Subscribe →</a>
+		</div>
+	{/if}
+
+	{#if hasRecurring}
+		<div class="tab-row" role="tablist">
+			<button type="button" role="tab" class="tab" class:active={tab === 'services'} aria-selected={tab === 'services'} on:click={() => switchTab('services')}>Services</button>
+			<button type="button" role="tab" class="tab" class:active={tab === 'recurring'} aria-selected={tab === 'recurring'} on:click={() => switchTab('recurring')}>Recurring products</button>
+		</div>
+	{/if}
+
+	{#if isRecurring}
+		<div class="rec-options">
+			<label>Term
+				<select class="form-control" bind:value={termMonths}>
+					{#each data.recurringTerms as t}<option value={t}>{t} month{t === 1 ? '' : 's'}</option>{/each}
+				</select>
+			</label>
+			<label>Payment option
+				<select class="form-control" bind:value={payOption}>
+					<option value="full">Pay in full</option>
+					<option value="monthly">Pay by month</option>
+				</select>
+			</label>
+			<p class="rec-hint">
+				{#if payOption === 'full'}Charged today: quantity × monthly price × term.{:else}Only the first month (quantity × monthly price) is charged today; the remaining months are tracked as pending payments on the contract.{/if}
+			</p>
 		</div>
 	{/if}
 
@@ -254,8 +307,13 @@
 								{/if}
 							</td>
 							<td class="col-price">
-								{formatPrice(r.unitPrice * qty || r.unitPrice, r.currency)}
-								{#if r.paymentType === 'Deposit' && r.depositAmount != null}
+								{#if isRecurring}
+									{formatPrice(r.unitPrice * (qty || 1), r.currency)}<span class="per-mo"> / mo</span>
+									<div class="dep-note">× {termMonths} mo = {formatPrice(r.unitPrice * (qty || 1) * termMonths, r.currency)}</div>
+								{:else}
+									{formatPrice(r.unitPrice * qty || r.unitPrice, r.currency)}
+								{/if}
+								{#if !isRecurring && r.paymentType === 'Deposit' && r.depositAmount != null}
 									<div class="dep-note">
 										<strong>{formatPrice(r.depositAmount * (qty || 1), r.currency)}</strong> deposit now
 									</div>
@@ -306,8 +364,8 @@
 				{#if totalUnits > 0}
 					{totalUnits} unit{totalUnits === 1 ? '' : 's'} selected · subtotal
 					<strong class="footer-total">{formatPrice(total, currency)}</strong>
-					{#if hasDeposit}
-						· first payment <strong class="footer-total">{formatPrice(dueFirst, currency)}</strong>
+					{#if hasDeposit || isRecurring}
+						· {isRecurring ? 'due today' : 'first payment'} <strong class="footer-total">{formatPrice(dueFirst, currency)}</strong>
 					{/if}
 				{:else}
 					Select one or more services to continue. The same service can be added more than once.
@@ -325,6 +383,14 @@
 </div>
 
 <style>
+	.tab-row { display: flex; gap: 4px; border-bottom: 1px solid var(--grey-line); margin-bottom: 14px; }
+	.tab { border: none; background: none; padding: 10px 16px; font-size: 13px; font-weight: 700; color: var(--grey-text); cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px; }
+	.tab.active { color: var(--navy); border-bottom-color: var(--orange); }
+	.rec-options { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 16px; background: white; border: 1px solid var(--grey-line); border-radius: var(--radius); padding: 14px 18px; margin-bottom: 14px; }
+	.rec-options label { display: flex; flex-direction: column; gap: 4px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--grey-text); }
+	.rec-options select { min-width: 160px; text-transform: none; letter-spacing: 0; font-weight: 500; }
+	.rec-hint { flex: 1; min-width: 220px; margin: 0; font-size: 12px; color: var(--grey-text); }
+	.per-mo { font-size: 11px; font-weight: 500; color: var(--grey-text); }
 	.dep-note { font-size: 12px; font-weight: 600; color: var(--navy); margin-top: 3px; }
 	.dep-split { font-size: 11px; font-weight: 500; color: var(--grey-text); margin-top: 1px; max-width: 150px; margin-left: auto; }
 	.split-banner {
