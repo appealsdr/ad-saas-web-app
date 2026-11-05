@@ -2,6 +2,7 @@
 	import { goto } from '$app/navigation';
 	import Topbar from '$components/layout/Topbar.svelte';
 	import Badge from '$lib/components/ui/Badge.svelte';
+	import CaseStepsCell from '$components/cases/CaseStepsCell.svelte';
 	import type { PageData } from './$types';
 
 	export let data: PageData;
@@ -140,7 +141,10 @@
 							on:click={() => openRow(c)}
 						>
 							<td class="case-num">{c.CaseNumber}</td>
-							<td class="subject">{c.Subject ?? '—'}</td>
+							<td class="subject">
+								{c.Subject ?? '—'}
+								<CaseStepsCell steps={c.steps} closed={/closed|resolved/i.test(c.Status)} />
+							</td>
 							<td>
 								{#if c.localStoreId && c.storeName}
 									<a class="store-link"

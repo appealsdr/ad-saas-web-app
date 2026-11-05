@@ -11,6 +11,22 @@
 	export let form: ActionData;
 
 	let posting = false;
+
+	// ── Onboarding information (Case.Case_Onboarding__c config) ──
+	let editingOnboarding = false;
+	let savingOnboarding = false;
+	$: onboarding = data.onboarding;
+	// First-time fill-in opens straight into edit mode; afterwards the user clicks Edit.
+	let onboardingInit = false;
+	$: if (onboarding && !onboardingInit) {
+		onboardingInit = true;
+		editingOnboarding = !onboarding.provided;
+	}
+	$: onboardingErrors = (form as { onboardingFieldErrors?: Record<string, string> } | null)?.onboardingFieldErrors ?? {};
+	function showValue(v: string | number | boolean | null, type: string): string {
+		if (type === 'checkbox') return v ? 'Yes' : 'No';
+		return v === null || v === '' ? '—' : String(v);
+	}
 	let recalculating = false;
 	let commentInput = '';
 	let commentSearch = '';
@@ -130,6 +146,9 @@
 	// ── Required-file rollup ──
 	$: uploadedFiles = data.requiredFiles.filter((f) => f.uploaded);
 	$: pendingFiles  = data.requiredFiles.filter((f) => !f.uploaded);
+	$: onboardingPending = !!onboarding && !onboarding.provided;
+	$: stepsTotal = data.requiredFiles.length + (onboarding ? 1 : 0);
+	$: stepsDone = uploadedFiles.length + (onboarding?.provided ? 1 : 0);
 
 
 	$: isMine = (m: { senderContactId: string | null }) =>
@@ -207,13 +226,26 @@
 			</div>
 			<div class="hero-progress">
 				<div class="progress-segs">
+					{#if onboarding}
+						<span class="progress-seg" class:done={onboarding.provided} title="Onboarding information"></span>
+					{/if}
 					{#each data.requiredFiles as f (f.id)}
 						<span class="progress-seg" class:done={f.uploaded} title={f.name}></span>
 					{/each}
 				</div>
-				<span class="hero-meta">{uploadedFiles.length} of {data.requiredFiles.length} files submitted</span>
+				<span class="hero-meta">{stepsDone} of {stepsTotal} steps done</span>
 			</div>
-			{#if isWaitingOnClient(data.case.Status) && pendingFiles.length > 0}
+			{#if onboardingPending || pendingFiles.length > 0}
+				<ul class="hero-todo">
+					{#if onboardingPending}
+						<li>Onboarding information not provided yet</li>
+					{/if}
+					{#each pendingFiles as f (f.id)}
+						<li>Not uploaded: {f.name}</li>
+					{/each}
+				</ul>
+			{/if}
+				{#if isWaitingOnClient(data.case.Status) && pendingFiles.length > 0}
 				<div class="alert alert-warn" style="margin:0">
 					⚠️ Action required: Please upload the requested documents to proceed.
 				</div>
@@ -223,6 +255,92 @@
 			<div class="rev-label">Estimated Revenue at Risk</div>
 			<div class="rev-amount">${revenueAtRisk.toLocaleString()}</div>
 		</div>
+		<!-- ── Onboarding information (only when the case has an onboarding config) ── -->
+			{#if onboarding}
+				<div class="onb-card">
+					<div class="card-title">
+						Onboarding information
+						{#if onboarding.provided}
+							<span class="onb-state done">✓ Provided</span>
+						{:else}
+							<span class="onb-state todo">Needs your input</span>
+						{/if}
+					</div>
+
+					{#if form && 'onboardingError' in form && form.onboardingError}
+						<div class="alert alert-error" style="margin-bottom:10px">{form.onboardingError}</div>
+					{/if}
+					{#if form && 'onboardingSuccess' in form && form.onboardingSuccess}
+						<div class="alert alert-success" style="margin-bottom:10px">{form.onboardingSuccess}</div>
+					{/if}
+
+					{#if editingOnboarding}
+						<form
+							method="POST"
+							action="?/save_onboarding"
+							use:enhance={() => {
+								savingOnboarding = true;
+								return async ({ update, result }) => {
+									await update({ reset: false });
+									savingOnboarding = false;
+									if (result.type === 'success') editingOnboarding = false;
+								};
+							}}
+						>
+							<div class="onb-fields">
+								{#each onboarding.fields as f (f.apiName)}
+									<label class="onb-field" class:err={onboardingErrors[f.apiName]}>
+										<span class="onb-label">{f.label}{#if f.required} <b class="req">*</b>{/if}</span>
+										{#if f.type === 'checkbox'}
+											<input type="checkbox" name={f.apiName} checked={f.value === true} />
+										{:else if f.type === 'picklist'}
+											<select class="form-control" name={f.apiName}>
+												<option value="">—</option>
+												{#each f.options as o}
+													<option value={o} selected={f.value === o}>{o}</option>
+												{/each}
+											</select>
+										{:else if f.type === 'textarea'}
+											<textarea class="form-control" name={f.apiName} rows="3">{f.value ?? ''}</textarea>
+										{:else}
+											<input
+												class="form-control"
+												name={f.apiName}
+												type={f.type === 'number' ? 'number' : f.type === 'date' ? 'date' : 'text'}
+												step={f.type === 'number' ? 'any' : undefined}
+												value={f.value ?? ''}
+											/>
+										{/if}
+										{#if onboardingErrors[f.apiName]}
+											<span class="onb-err">{onboardingErrors[f.apiName]}</span>
+										{/if}
+									</label>
+								{/each}
+							</div>
+							<div class="onb-actions">
+								<button type="submit" class="btn btn-primary btn-sm" data-mutates disabled={savingOnboarding}>
+									{savingOnboarding ? 'Saving…' : 'Save'}
+								</button>
+								{#if onboarding.provided}
+									<button type="button" class="btn btn-outline btn-sm" on:click={() => (editingOnboarding = false)}>Cancel</button>
+								{/if}
+							</div>
+						</form>
+					{:else}
+						<dl class="onb-view">
+							{#each onboarding.fields as f (f.apiName)}
+								<div>
+									<dt>{f.label}</dt>
+									<dd>{showValue(f.value, f.type)}</dd>
+								</div>
+							{/each}
+						</dl>
+						<div class="onb-actions">
+							<button type="button" class="btn btn-outline btn-sm" data-mutates on:click={() => (editingOnboarding = true)}>Edit</button>
+						</div>
+					{/if}
+				</div>
+			{/if}
 	</section>
 
 	<div class="case-detail-grid">
@@ -465,7 +583,7 @@
 	/* ── Breadcrumb + hero (Case Detail reference) ───────────── */
 	.hero {
 		background: white; border: 1px solid var(--grey-line); border-radius: var(--radius);
-		padding: 20px 22px; display: flex; gap: 20px; align-items: center;
+		padding: 20px 22px; display: flex; flex-wrap: wrap; gap: 20px; align-items: flex-start;
 		justify-content: space-between; margin-bottom: 16px;
 	}
 	.hero-main { display: flex; flex-direction: column; gap: 10px; flex: 1 1 0; min-width: 0; }
@@ -484,6 +602,8 @@
 	.progress-segs { display: flex; gap: 4px; }
 	.progress-seg { width: 34px; height: 6px; border-radius: 3px; background: var(--grey-line); }
 	.progress-seg.done { background: var(--green); }
+	.hero-todo { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; font-size: 12px; color: #b45309; }
+	.hero-todo li::before { content: '• '; }
 	.rev-box {
 		background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
 		border-radius: 10px; padding: 10px 16px; color: white;
@@ -493,6 +613,24 @@
 	.rev-amount { font-size: 20px; font-weight: 800; color: var(--orange); line-height: 1.2; }
 	.docs-card { height: 560px; display: flex; flex-direction: column; overflow: hidden; margin-bottom: 0; }
 	.docs-card :global(.required-files), .docs-card > :global(:last-child) { min-height: 0; overflow-y: auto; }
+
+	/* Onboarding information */
+	.onb-card { flex: 0 0 100%; width: 100%; margin-top: 2px; padding-top: 14px; border-top: 1px solid var(--grey-line); }
+	.onb-card .card-title { border-bottom: 0; padding-bottom: 0; margin-bottom: 12px; }
+	@media (min-width: 720px) { .onb-fields { grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px 20px; } .onb-view { grid-template-columns: 1fr 1fr; gap: 12px 20px; } }
+	.onb-state { font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 999px; }
+	.onb-state.done { color: var(--green); background: #DCFCE7; }
+	.onb-state.todo { color: #92400e; background: #FEF3C7; }
+	.onb-fields { display: grid; gap: 12px; align-items: end; }
+	.onb-field { display: grid; gap: 4px; font-size: 13px; }
+	.onb-label { font-weight: 600; color: var(--navy); }
+	.onb-label .req { color: #b91c1c; }
+	.onb-field.err :global(.form-control) { border-color: #b91c1c; }
+	.onb-err { color: #b91c1c; font-size: 12px; }
+	.onb-actions { display: flex; gap: 8px; margin-top: 14px; }
+	.onb-view { display: grid; gap: 10px; margin: 0; }
+	.onb-view dt { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--grey-text); }
+	.onb-view dd { margin: 2px 0 0; font-size: 14px; color: var(--navy); word-break: break-word; }
 
 	.card {
 		background: white; border: 1px solid var(--grey-line);

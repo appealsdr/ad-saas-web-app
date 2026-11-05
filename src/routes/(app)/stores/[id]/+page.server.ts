@@ -26,6 +26,7 @@ import {
 	getStoreMarketplaceOptions,
 	fetchStoreMetrics,
 	listCasesForStore,
+	getCaseSteps,
 	listRequiredFilesForStore,
 	attachUploadToRequiredFile,
 	clearRequiredFile
@@ -204,6 +205,11 @@ export const load: PageServerLoad = async ({ params, locals }) => {
 		: null;
 	const cases = casesResult && casesResult.ok ? casesResult.cases : [];
 	const casesError = casesResult && !casesResult.ok ? casesResult.error : null;
+	// Outstanding steps (documents + onboarding info) for the cases still open.
+	const stepsByCase = await getCaseSteps(
+		cases.filter((c) => !/closed|resolved/i.test(c.Status)).map((c) => c.Id)
+	);
+	const casesWithSteps = cases.map((c) => ({ ...c, steps: stepsByCase.get(c.Id) }));
 
 	// Required_File__c (store-level) + local upload mirror.
 	const [filesResult, uploads] = await Promise.all([
@@ -320,7 +326,7 @@ export const load: PageServerLoad = async ({ params, locals }) => {
 			: null,
 		requiredFiles,
 		filesError,
-		cases,
+		cases: casesWithSteps,
 		casesError,
 		...(await storeBilling(store.account_id, store.id))
 	};

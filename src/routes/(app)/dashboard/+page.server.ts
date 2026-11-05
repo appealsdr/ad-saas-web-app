@@ -15,7 +15,9 @@ import {
 	listCasesForStores,
 	listRecentMessagesForCases,
 	listRequiredFilesForStores,
-	listRequiredFilesForCases
+	listRequiredFilesForCases,
+	listOnboardingStatusForCases,
+	getCaseSteps
 } from '$lib/server/salesforce';
 import { sanitizeMessageHtml } from '$lib/server/sanitize';
 
@@ -36,6 +38,16 @@ interface DashRequiredFile {
 	caseId: string | null;
 	caseNumber: string | null;
 	href: string;
+}
+
+/** One row of the "Action required" block: a store or a case, with everything still owed on it. */
+interface DashAction {
+	key: string;
+	scope: 'store' | 'case';
+	title: string;
+	subtitle: string | null;
+	href: string;
+	todos: { kind: 'file' | 'onboarding'; text: string }[];
 }
 
 interface StoreRow {
@@ -188,8 +200,54 @@ export const load: PageServerLoad = async ({ locals }) => {
 		requiredFilesError = requiredFilesError ?? caseFilesResult.error;
 	}
 
-	// Store-level slots first, then case-level; cap the displayed rows.
-	const requiredFiles = pendingRequired.slice(0, REQUIRED_FILES_LIMIT);
+	// ── Action required: pending files + onboarding info, grouped per store / case ──
+	const openCaseIds = cases.filter((c) => !isResolved(c.Status)).map((c) => c.Id);
+	const onboardingStatus = await listOnboardingStatusForCases(openCaseIds.slice(0, CASE_SCAN_LIMIT));
+
+	const actionMap = new Map<string, DashAction>();
+	for (const f of pendingRequired) {
+		const key = f.context === 'case' ? `case:${f.caseId}` : `store:${f.localStoreId ?? f.storeName}`;
+		let a = actionMap.get(key);
+		if (!a) {
+			a =
+				f.context === 'case'
+					? {
+							key,
+							scope: 'case',
+							title: `Case ${f.caseNumber ?? (f.caseId ? f.caseId.slice(0, 8) : '—')}`,
+							subtitle: f.storeName,
+							href: f.href,
+							todos: []
+						}
+					: { key, scope: 'store', title: `Store: ${f.storeName ?? '—'}`, subtitle: null, href: f.href, todos: [] };
+			actionMap.set(key, a);
+		}
+		a.todos.push({ kind: 'file', text: `Not uploaded: ${f.name}` });
+	}
+	for (const [caseId, o] of onboardingStatus) {
+		if (o.provided) continue;
+		const key = `case:${caseId}`;
+		const loc = caseStoreById.get(caseId) ?? null;
+		let a = actionMap.get(key);
+		if (!a) {
+			a = {
+				key,
+				scope: 'case',
+				title: `Case ${caseNumberById.get(caseId) ?? caseId.slice(0, 8)}`,
+				subtitle: loc?.storeName ?? null,
+				href: loc?.localStoreId ? `/stores/${loc.localStoreId}/issues/${caseId}` : '/issues',
+				todos: []
+			};
+			actionMap.set(key, a);
+		}
+		a.todos.unshift({ kind: 'onboarding', text: 'Onboarding information not provided' });
+	}
+	const allActions = [...actionMap.values()];
+	const actions = allActions.slice(0, REQUIRED_FILES_LIMIT);
+	const actionSummary = {
+		todos: allActions.reduce((n, a) => n + a.todos.length, 0),
+		rows: allActions.length
+	};
 
 	// ── Stats ──
 	const monthStart = startOfMonth();
@@ -203,17 +261,22 @@ export const load: PageServerLoad = async ({ locals }) => {
 		resolvedThisMonth: cases.filter(
 			(c) => isResolved(c.Status) && new Date(c.LastModifiedDate).getTime() >= monthStart
 		).length,
-		// Total pending required-file slots across all stores + scanned cases.
-		pendingFiles: pendingRequired.length
+		// Total outstanding actions (pending files + missing onboarding info).
+		pendingFiles: actionSummary.todos
 	};
 
 	// ── Recent issues table (newest by LastModifiedDate) ──
-	const recentCases = [...cases]
+	const recentCasesBase = [...cases]
 		.sort(
 			(a, b) =>
 				new Date(b.LastModifiedDate).getTime() - new Date(a.LastModifiedDate).getTime()
 		)
-		.slice(0, RECENT_CASES_LIMIT)
+		.slice(0, RECENT_CASES_LIMIT);
+	// Outstanding documents / onboarding info for the open cases shown in the table.
+	const recentSteps = await getCaseSteps(
+		recentCasesBase.filter((c) => !/closed|resolved/i.test(c.Status)).map((c) => c.Id)
+	);
+	const recentCases = recentCasesBase
 		.map((c) => ({
 			Id: c.Id,
 			CaseNumber: c.CaseNumber,
@@ -222,6 +285,7 @@ export const load: PageServerLoad = async ({ locals }) => {
 			Status: c.Status,
 			Priority: c.Priority,
 			LastModifiedDate: c.LastModifiedDate,
+			steps: recentSteps.get(c.Id),
 			...caseStoreById.get(c.Id)
 		}));
 
@@ -246,7 +310,8 @@ export const load: PageServerLoad = async ({ locals }) => {
 		stats,
 		recentCases,
 		recentComments,
-		requiredFiles,
+		actions,
+		actionSummary,
 		requiredSummary: {
 			pending: pendingRequired.length,
 			uploaded: requiredUploaded,
