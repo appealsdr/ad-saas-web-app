@@ -33,7 +33,10 @@ import {
 	listCaseHistory,
 	buildCaseTimeline,
 	fetchStoreMetrics,
-	updateCaseEstimatedRevenueAtRisk
+	updateCaseEstimatedRevenueAtRisk,
+	fetchCaseOnboarding,
+	saveCaseOnboarding,
+	findCaseStoreLookup
 } from '$lib/server/salesforce';
 import { putObject, deleteObject, getRegion } from '$lib/server/storage/s3';
 import { caseFileKey } from '$lib/server/storage/s3-paths';
@@ -130,8 +133,9 @@ export const load: PageServerLoad = async ({ params, locals }) => {
 	if (!store) throw error(404, 'Store not found.');
 
 	const ctx = { userId: locals.user.id, accountId: store.account_id };
-	const [caseResult, messagesResult, filesResult, historyResult, uploads, storeMetrics] = await Promise.all([
+	const [caseResult, onboarding, messagesResult, filesResult, historyResult, uploads, storeMetrics] = await Promise.all([
 		fetchCase(params.caseId, ctx),
+		fetchCaseOnboarding(params.caseId, ctx),
 		listCaseMessages(params.caseId, ctx),
 		listRequiredFilesForCase(params.caseId),
 		listCaseHistory(params.caseId, ctx),
@@ -245,6 +249,7 @@ export const load: PageServerLoad = async ({ params, locals }) => {
 		storeMarketplaces: store.marketplaces,
 		storeTotalSaved: storeMetrics.totalRevenueRecovered,
 		case: caseResult.record,
+		onboarding,
 		messages,
 		messagesError: messagesResult.ok ? null : messagesResult.error,
 		requiredFiles,
@@ -260,6 +265,33 @@ export const load: PageServerLoad = async ({ params, locals }) => {
 };
 
 export const actions: Actions = {
+	/** Save the case's onboarding information; marks Onboarding_Info_Provided__c = true. */
+	save_onboarding: async ({ request, params, locals }) => {
+		if (!locals.user) throw redirect(303, '/login');
+		const store = await loadStore(params.id, locals.user.id);
+		if (!store) throw error(404, 'Store not found.');
+		const ctx = { userId: locals.user.id, accountId: store.account_id };
+
+		// The case must belong to this (tenant-checked) store before we write to it.
+		const lookup = await findCaseStoreLookup(params.caseId, ctx);
+		if (!lookup.ok || !store.sfdc_store_id || lookup.sfdcStoreId !== store.sfdc_store_id) {
+			throw error(404, 'Case not found.');
+		}
+
+		const form = await request.formData();
+		const submitted: Record<string, FormDataEntryValue | null> = {};
+		for (const [k, v] of form.entries()) submitted[k] = v;
+
+		const result = await saveCaseOnboarding(params.caseId, submitted, ctx);
+		if (!result.ok) {
+			return fail(result.fieldErrors ? 400 : 502, {
+				onboardingError: result.error,
+				onboardingFieldErrors: result.fieldErrors ?? {}
+			});
+		}
+		return { onboardingSuccess: 'Onboarding information saved.' };
+	},
+
 	post_comment: async ({ request, params, locals }) => {
 		if (!locals.user) throw redirect(303, '/login');
 		const store = await loadStore(params.id, locals.user.id);

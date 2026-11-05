@@ -12,7 +12,7 @@
 import { redirect } from '@sveltejs/kit';
 import type { PageServerLoad } from './$types';
 import { sql } from '$lib/server/db';
-import { listCasesForStores, type CaseSummaryWithStore } from '$lib/server/salesforce';
+import { listCasesForStores, getCaseSteps, type CaseSummaryWithStore, type CaseSteps } from '$lib/server/salesforce';
 
 interface StoreRow {
 	id: string;
@@ -23,6 +23,8 @@ interface StoreRow {
 export interface IssueRow extends CaseSummaryWithStore {
 	localStoreId: string | null;
 	storeName: string | null;
+	/** Outstanding documents / onboarding info; undefined for closed cases. */
+	steps?: CaseSteps;
 }
 
 export const load: PageServerLoad = async ({ locals }) => {
@@ -61,12 +63,17 @@ export const load: PageServerLoad = async ({ locals }) => {
 		};
 	}
 
+	const stepsByCase = await getCaseSteps(
+		result.cases.filter((c) => !/closed|resolved/i.test(c.Status)).map((c) => c.Id)
+	);
+
 	const issues: IssueRow[] = result.cases.map((c) => {
 		const local = c.sfdcStoreId ? storeBySfdcId.get(c.sfdcStoreId) ?? null : null;
 		return {
 			...c,
 			localStoreId: local?.localId ?? null,
-			storeName: local?.name ?? null
+			storeName: local?.name ?? null,
+			steps: stepsByCase.get(c.Id)
 		};
 	});
 

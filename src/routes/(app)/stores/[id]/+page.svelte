@@ -3,6 +3,7 @@
 	import { page } from '$app/stores';
 	import Topbar from '$components/layout/Topbar.svelte';
 	import RequiredFiles from '$components/files/RequiredFiles.svelte';
+	import CaseStepsCell from '$components/cases/CaseStepsCell.svelte';
 	import type { PageData, ActionData } from './$types';
 
 	export let data: PageData;
@@ -414,7 +415,10 @@
 							class:row-waiting={isWaitingOnClient(c.Status)}
 							on:click={() => location.assign(`/stores/${data.store.id}/issues/${c.Id}`)}
 						>
-							<td><strong>{c.CaseNumber}</strong></td>
+							<td>
+								<strong>{c.CaseNumber}</strong>
+								<CaseStepsCell steps={c.steps} closed={/closed|resolved/i.test(c.Status)} />
+							</td>
 							<td>{c.recordTypeName ?? '—'}</td>
 							<td><span class={`badge ${badgeClass(c.Status)}`}>{c.Status}</span></td>
 							<td>{c.Priority ?? '—'}</td>

@@ -95,6 +95,11 @@ export type { ServiceContractInput, ServiceContractResult } from './contracts';
 export { createServiceCase, listCasesForContract, getCaseCustomRecordTypeId } from './service-cases';
 export type { ServiceCaseInput, ServiceCaseResult } from './service-cases';
 
+export { fetchCaseOnboarding, saveCaseOnboarding, listOnboardingStatusForCases } from './case-onboarding';
+export type { CaseOnboarding, OnboardingField, OnboardingFieldType } from './case-onboarding';
+export { getCaseSteps } from './case-steps';
+export type { CaseSteps } from './case-steps';
+
 export { createPayment } from './payments';
 export type { PaymentInput, PaymentResult } from './payments';
 
