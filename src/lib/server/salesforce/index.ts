@@ -89,7 +89,7 @@ export type { StoreFields, SfStoreResult, StoreMetrics } from './stores';
 
 export { VUID_FIELD, isVuidBlank, withVuidBackfill } from './vuid';
 
-export { createServiceContractWithLines } from './contracts';
+export { createServiceContractWithLines, buildRecurringLines, recurringMonthDescription, addMonthsClamped } from './contracts';
 export type { ServiceContractInput, ServiceContractResult } from './contracts';
 
 export { createServiceCase, listCasesForContract, getCaseCustomRecordTypeId } from './service-cases';

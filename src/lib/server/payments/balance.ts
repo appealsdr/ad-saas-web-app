@@ -117,9 +117,11 @@ export async function applyBalancePaid(pi: Stripe.PaymentIntent): Promise<'appli
 			return 'mismatch';
 		}
 		const pm = typeof pi.payment_method === 'string' ? pi.payment_method : pi.payment_method?.id ?? null;
+		const paidAt = new Date((pi.created ?? Math.floor(Date.now() / 1000)) * 1000);
 		await sobjectUpdate('Payment__c', paymentId, {
 			Status__c: 'Paid',
-			PaidAt__c: new Date((pi.created ?? Math.floor(Date.now() / 1000)) * 1000).toISOString(),
+			PaidAt__c: paidAt.toISOString(),
+			Payment_Date__c: paidAt.toISOString().slice(0, 10), // the day the client paid via Stripe
 			Total_Paid__c: pi.amount / 100,
 			Stripe_Payment_Intent_Id__c: pi.id,
 			...(pm ? { Payment_Method__c: pm } : {})

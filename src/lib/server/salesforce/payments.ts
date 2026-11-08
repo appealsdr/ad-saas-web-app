@@ -39,6 +39,7 @@ const PAYMENT_FIELDS = {
 	opportunity: 'Opportunity__c',
 	orderRef: 'Order_Ref__c',
 	paidAt: 'PaidAt__c',
+	paymentDate: 'Payment_Date__c',
 	paymentMethod: 'Payment_Method__c',
 	paymentType: 'Payment_Type__c',
 	serviceContract: 'Service_Contract__c',
@@ -58,6 +59,11 @@ export interface PaymentInput {
 	status?: string; // Payment__c Status__c picklist value
 	paymentType?: string | null; // e.g. "Service Contract"
 	paidAt?: Date;
+	/**
+	 * Payment_Date__c (date). A collected payment: the day the client paid via Stripe (defaults to paidAt/now).
+	 * A scheduled, not-yet-paid installment: the day it falls due.
+	 */
+	paymentDate?: Date;
 	/** Stripe references. Omitted for a payment that has not been collected yet (status Pending). */
 	stripe?: {
 		paymentIntentId: string;
@@ -97,6 +103,8 @@ export async function createPayment(
 		payload[PAYMENT_FIELDS.totalPaid] = input.amount;
 		payload[PAYMENT_FIELDS.paidAt] = (input.paidAt ?? new Date()).toISOString();
 	}
+	const payDate = input.paymentDate ?? (paid ? (input.paidAt ?? new Date()) : null);
+	if (payDate) payload[PAYMENT_FIELDS.paymentDate] = payDate.toISOString().slice(0, 10);
 	if (input.stripe) {
 		payload[PAYMENT_FIELDS.stripePaymentIntentId] = input.stripe.paymentIntentId;
 		if (input.stripe.paymentMethodId) payload[PAYMENT_FIELDS.paymentMethod] = input.stripe.paymentMethodId;
