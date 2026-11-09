@@ -46,6 +46,7 @@ interface SfPayment {
 	Status__c: string | null;
 	Payment_Type__c: string | null;
 	PaidAt__c: string | null;
+	Payment_Date__c: string | null;
 	Description__c: string | null;
 	CreatedDate: string;
 	Stripe_Payment_Intent_Id__c: string | null;
@@ -79,7 +80,7 @@ async function fetchSfPayments(sfdcContractIds: string[]): Promise<SfPayment[]> 
 	for (let i = 0; i < sfdcContractIds.length; i += 150) {
 		const ids = sfdcContractIds.slice(i, i + 150).map((id) => `'${id.replace(/'/g, '')}'`).join(',');
 		const res = await sfdcQuery<SfPayment>(
-			`SELECT Id, Name, Amount__c, Status__c, Payment_Type__c, PaidAt__c, Description__c, CreatedDate,
+			`SELECT Id, Name, Amount__c, Status__c, Payment_Type__c, PaidAt__c, Payment_Date__c, Description__c, CreatedDate,
 			        Stripe_Payment_Intent_Id__c, Service_Contract__c, Contract_Line_Item__c
 			 FROM Payment__c WHERE Service_Contract__c IN (${ids}) ORDER BY CreatedDate ASC`,
 			{ paginate: true }
@@ -166,7 +167,8 @@ export const load: PageServerLoad = async ({ locals }) => {
 			amount: Number(p.Amount__c ?? 0),
 			status: mapStatus(p.Status__c, isBalance),
 			statusRaw: p.Status__c ?? 'Pending',
-			date: (p.PaidAt__c || p.CreatedDate).slice(0, 10),
+			// Paid → when it was paid; not paid yet → its Payment_Date__c (the due date); else when the record was created.
+			date: (p.PaidAt__c || p.Payment_Date__c || p.CreatedDate).slice(0, 10),
 			pi: p.Stripe_Payment_Intent_Id__c,
 			isLine
 		});
