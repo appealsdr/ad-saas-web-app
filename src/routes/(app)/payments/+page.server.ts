@@ -39,6 +39,17 @@ interface LineRow {
 	quantity: number;
 }
 
+/** Salesforce ServiceContract.Name by Id (best-effort) — the contract's real name, e.g. "<Store> <date> Recurring Services". */
+async function fetchSfContractNames(sfdcContractIds: string[]): Promise<Map<string, string>> {
+	const out = new Map<string, string>();
+	for (let i = 0; i < sfdcContractIds.length; i += 150) {
+		const ids = sfdcContractIds.slice(i, i + 150).map((id) => `'${id.replace(/'/g, '')}'`).join(',');
+		const res = await sfdcQuery<{ Id: string; Name: string | null }>(`SELECT Id, Name FROM ServiceContract WHERE Id IN (${ids})`, { paginate: true });
+		for (const r of res.records) if (r.Name) out.set(r.Id, r.Name);
+	}
+	return out;
+}
+
 interface SfPayment {
 	Id: string;
 	Name: string;
@@ -132,9 +143,11 @@ export const load: PageServerLoad = async ({ locals }) => {
 	// Salesforce payments, best-effort.
 	let sfPayments: SfPayment[] = [];
 	let paymentsError: string | null = null;
+	let sfNames = new Map<string, string>();
 	const sfIds = rows.map((r) => r.sfdc_service_contract_id).filter((x): x is string => !!x);
 	if (sfIds.length) {
 		try {
+			sfNames = await fetchSfContractNames(sfIds).catch(() => new Map<string, string>());
 			sfPayments = await fetchSfPayments(sfIds);
 		} catch (e) {
 			paymentsError = e instanceof Error ? e.message : String(e);
@@ -194,7 +207,7 @@ export const load: PageServerLoad = async ({ locals }) => {
 	return {
 		accountName: (acct?.name ?? null) as string | null,
 		receiptEmail: user.email as string | null,
-		contracts: rows.map((r) => shapeContract(r, linesBy.get(r.id) ?? [])),
+		contracts: rows.map((r) => shapeContract(r, linesBy.get(r.id) ?? [], r.sfdc_service_contract_id ? sfNames.get(r.sfdc_service_contract_id) ?? null : null)),
 		payments,
 		paymentsError
 	};
@@ -216,9 +229,11 @@ export interface PaymentOut {
 	detail?: string | null;
 }
 
-function shapeContract(r: ContractRow, lines: LineRow[]) {
+function shapeContract(r: ContractRow, lines: LineRow[], sfName: string | null) {
 	return {
 		id: r.id,
+		/** Salesforce ServiceContract.Name (null when not synced / unavailable). */
+		name: sfName,
 		ref: `SC-${r.id.slice(0, 8).toUpperCase()}`,
 		kind: r.kind,
 		storeId: r.store_id,
