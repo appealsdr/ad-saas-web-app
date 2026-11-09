@@ -69,7 +69,11 @@ async function handleAdmin(event: RequestEvent, resolve: Parameters<Handle>[0]['
 		'cache-control': 'no-store, private',
 		'x-frame-options': 'DENY',
 		'x-content-type-options': 'nosniff',
-		'referrer-policy': 'no-referrer'
+		// 'no-referrer' makes browsers send `Origin: null` on plain same-origin
+		// <form method=POST> submissions (e.g. Sign out), which SvelteKit's CSRF
+		// check rejects as "Cross-site POST form submissions are forbidden".
+		// 'same-origin' still leaks nothing cross-site but keeps a real Origin.
+		'referrer-policy': 'same-origin'
 	});
 	return resolve(event);
 }

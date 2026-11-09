@@ -29,6 +29,7 @@ export interface S3DocumentInput {
 	contentType?: string | null; // MIME type
 	sizeBytes?: number;
 	description?: string | null;
+	requiredFileId?: string | null; // Required_File__c Id, when uploaded against a required file
 	uploadedDate?: Date; // defaults to now
 }
 
@@ -70,6 +71,7 @@ export async function createS3Document(
 	if (input.contentType) payload.Content_Type__c = input.contentType;
 	if (typeof input.sizeBytes === 'number') payload.File_Size_Bytes__c = input.sizeBytes;
 	if (input.description) payload.Description__c = input.description;
+	if (input.requiredFileId) payload.Required_File__c = input.requiredFileId;
 
 	try {
 		const created = await sobjectCreate(S3_DOCUMENT_OBJECT, payload);

@@ -21,7 +21,7 @@ import {
 	splitFullName
 } from '../salesforce/sync';
 import { createSalesforceStore, updateSalesforceStore } from '../salesforce/stores';
-import { createServiceContractWithLines, populateContract, type ServiceContractInput } from '../salesforce/contracts';
+import { createServiceContractWithLines, populateContract, recurringMonthDescription, addMonthsClamped, type ServiceContractInput } from '../salesforce/contracts';
 import { updateSalesforceAccount, updateSalesforceContact } from '../salesforce/records';
 import { logError } from '../error_log';
 import { recordAudit, type AuditActor } from './audit';
@@ -324,7 +324,7 @@ async function resyncContract(accountId: string, contractId: string, mode: SyncM
 	}
 	await sql.begin(async (tx) => {
 		await tx`UPDATE service_contracts SET sfdc_service_contract_id = ${res.sfdcServiceContractId}, sync_status = 'synced', sync_error = NULL, synced_at = now() WHERE id = ${c.id}`;
-		const rows = await tx<{ id: string }[]>`SELECT id FROM service_contract_line_items WHERE service_contract_id = ${c.id} ORDER BY created_at`;
+		const rows = await tx<{ id: string }[]>`SELECT id FROM service_contract_line_items WHERE service_contract_id = ${c.id} ORDER BY seq NULLS LAST, created_at`;
 		for (let i = 0; i < rows.length; i++) {
 			if (res.lineItemIds[i]) await tx`UPDATE service_contract_line_items SET sfdc_contract_line_item_id = ${res.lineItemIds[i]} WHERE id = ${rows[i].id}`;
 		}
@@ -339,9 +339,9 @@ async function contractInput(accountId: string, c: ContractRowFull): Promise<Ser
 	const [acct] = await sql<{ name: string; sfdc_account_id: string | null }[]>`SELECT name, sfdc_account_id FROM accounts WHERE id = ${accountId}`;
 	if (!acct?.sfdc_account_id) throw new ActionError('The account is not in Salesforce. Create the account first.', 409);
 	if (!c.sfdc_pricebook2_id) throw new ActionError('This contract has no price book recorded, so it cannot be rebuilt in Salesforce.', 422);
-	const lines = await sql<{ product_name: string; unit_price: string; quantity: number; sfdc_pricebook_entry_id: string | null; balance_due: string }[]>`
-		SELECT product_name, unit_price, quantity, sfdc_pricebook_entry_id, balance_due FROM service_contract_line_items
-		WHERE service_contract_id = ${c.id} ORDER BY created_at`;
+	const lines = await sql<{ product_name: string; unit_price: string; quantity: number; sfdc_pricebook_entry_id: string | null; balance_due: string; month_index: number | null; payment_due_date: Date | null }[]>`
+		SELECT product_name, unit_price, quantity, sfdc_pricebook_entry_id, balance_due, month_index, payment_due_date FROM service_contract_line_items
+		WHERE service_contract_id = ${c.id} ORDER BY seq NULLS LAST, created_at`;
 	if (!lines.length) throw new ActionError('This contract has no line items to create in Salesforce.', 422);
 	if (lines.some((l) => !l.sfdc_pricebook_entry_id)) throw new ActionError('A line item has no Salesforce price book entry recorded, so the contract cannot be rebuilt.', 422);
 	const [owner] = c.user_id ? await sql<{ sfdc_contact_id: string | null }[]>`SELECT sfdc_contact_id FROM users WHERE id = ${c.user_id}` : [];
@@ -350,16 +350,26 @@ async function contractInput(accountId: string, c: ContractRowFull): Promise<Ser
 			SELECT s.name, s.sfdc_store_id, ac.sfdc_contact_id AS poc FROM stores s
 			LEFT JOIN account_contacts ac ON ac.id = s.point_of_contact_id WHERE s.id = ${c.store_id}`
 		: [];
-	const kind = c.kind === 'subscription' ? 'subscription' : 'service';
+	const kind = c.kind === 'subscription' ? 'subscription' : c.kind === 'recurring' ? 'recurring' : 'service';
+	// Recurring pay-by-month: a line with a later month still owing is a 'due' instalment; month 1 is the paid one.
+	const monthly = kind === 'recurring' && lines.some((l) => l.month_index != null && Number(l.balance_due) > 0);
 	return {
-		name: `${(store?.name ?? acct.name).trim()} ${c.start_date.toISOString().slice(0, 10)} ${kind === 'subscription' ? 'Subscription' : 'Services'}`,
+		name: `${(store?.name ?? acct.name).trim()} ${c.start_date.toISOString().slice(0, 10)} ${kind === 'subscription' ? 'Subscription' : kind === 'recurring' ? 'Recurring Services' : 'Services'}`,
 		kind, sfdcAccountId: acct.sfdc_account_id, sfdcContactId: owner?.sfdc_contact_id ?? null, sfdcStoreId: store?.sfdc_store_id ?? null,
 		sfdcPricebook2Id: c.sfdc_pricebook2_id, startDate: c.start_date, termMonths: c.term_months,
 		stripe: {
 			paymentIntentId: c.stripe_payment_intent_id, chargeId: c.stripe_charge_id, amount: Number(c.amount_cents) / 100, currency: c.currency.toUpperCase(),
 			receiptEmail: c.stripe_receipt_email, paymentMethodId: c.stripe_payment_method_id, paymentMethodType: c.stripe_payment_method_type
 		},
-		lineItems: lines.map((l) => ({ pricebookEntryId: l.sfdc_pricebook_entry_id!, quantity: l.quantity, unitPrice: Number(l.unit_price), name: l.product_name, balanceDue: Number(l.balance_due) })),
+		lineItems: lines.map((l) => ({
+			pricebookEntryId: l.sfdc_pricebook_entry_id!, quantity: l.quantity, unitPrice: Number(l.unit_price), name: l.product_name,
+			...(l.month_index != null
+				? {
+					description: recurringMonthDescription(l.month_index, c.term_months, c.start_date), monthIndex: l.month_index, skipCase: l.month_index > 1,
+					...(monthly ? { installment: { status: (l.month_index === 1 ? 'paid' : 'due') as 'paid' | 'due', dueDate: l.payment_due_date ?? addMonthsClamped(c.start_date, l.month_index - 1) } } : {})
+				}
+				: { balanceDue: Number(l.balance_due) })
+		})),
 		sfdcStoreContactId: store?.poc ?? null, localContractId: c.id,
 		paymentStatus: c.payment_status ?? (kind === 'subscription' ? 'Subscription' : 'Paid')
 	};
@@ -399,7 +409,7 @@ async function repairContract(accountId: string, c: ContractRowFull): Promise<st
 		'delete' // an admin asked for this repair: remove the redundant auto-generated pending payments
 	);
 	// Remember the new Salesforce line item ids locally.
-	const rows = await sql<{ id: string }[]>`SELECT id FROM service_contract_line_items WHERE service_contract_id = ${c.id} ORDER BY created_at`;
+	const rows = await sql<{ id: string }[]>`SELECT id FROM service_contract_line_items WHERE service_contract_id = ${c.id} ORDER BY seq NULLS LAST, created_at`;
 	for (let i = 0; i < rows.length; i++) {
 		if (out.lineItemIds[i]) await sql`UPDATE service_contract_line_items SET sfdc_contract_line_item_id = ${out.lineItemIds[i]} WHERE id = ${rows[i].id}`;
 	}

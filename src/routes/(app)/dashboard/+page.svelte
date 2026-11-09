@@ -1,4 +1,5 @@
 <script lang="ts">
+	import CaseStepsCell from '$components/cases/CaseStepsCell.svelte';
 	import Topbar from '$components/layout/Topbar.svelte';
 	import type { PageData } from './$types';
 
@@ -85,13 +86,13 @@
 			</div>
 		</a>
 		<a class="stat-card" href="/issues?filter=waiting">
-			<div class="stat-label">Pending Files</div>
+			<div class="stat-label">Action Required</div>
 			<div class="stat-value" class:warn={data.stats.pendingFiles > 0}>{data.stats.pendingFiles}</div>
 			<div class="stat-sub">
 				{#if data.stats.pendingFiles === 0}
-					All required files uploaded
+					Nothing waiting on you
 				{:else}
-					Documents awaiting upload
+					Documents or info awaiting you
 				{/if}
 			</div>
 		</a>
@@ -104,43 +105,40 @@
 		</div>
 	</div>
 
-	<!-- ─── Required Files (Required_File__c — store + case) ────── -->
-	{#if data.requiredFiles.length > 0}
+	<!-- ─── Action required: pending files + onboarding info, per store / case ────── -->
+	{#if data.actions.length > 0}
 		<div class="req-action-card">
 			<div class="req-action-hdr">
 				<div class="hdr-left">
 					<img class="hdr-icon" src="/icons/warning.png" alt="" aria-hidden="true" />
-					<h3>Required Files — Documents Pending</h3>
-					<span class="count-badge">{data.requiredSummary.pending}</span>
+					<h3>Action Required</h3>
+					<span class="count-badge">{data.actionSummary.todos}</span>
 				</div>
-				<a href="/stores" class="hdr-link">View all stores →</a>
+				<a href="/issues" class="hdr-link">View all cases →</a>
 			</div>
-			{#each data.requiredFiles as f}
-				<a class="req-action-item warning" href={f.href}>
+			{#each data.actions as a (a.key)}
+				<a class="req-action-item warning" href={a.href}>
 					<div class="req-item-icon warning"><img class="file-icn" src="/icons/file.png" alt="" aria-hidden="true" /></div>
 					<div class="req-item-body">
-						<div class="req-item-title">{f.name}</div>
-						<div class="req-item-sub">
-							{#if f.context === 'store'}
-								Store: {f.storeName ?? '—'}
-							{:else}
-								Case {f.caseNumber ?? (f.caseId ? f.caseId.slice(0, 8) : '—')}{#if f.storeName} · {f.storeName}{/if}
-							{/if}
-							{#if f.shortDescription} · {truncate(f.shortDescription, 70)}{/if}
-							{#if f.acceptedFormats.length} · {f.acceptedFormats.join(', ')}{/if}
-						</div>
+						<div class="req-item-title">{a.title}</div>
+						{#if a.subtitle}<div class="req-item-sub">{a.subtitle}</div>{/if}
+						<ul class="req-todos">
+							{#each a.todos as t}
+								<li>{t.text}</li>
+							{/each}
+						</ul>
 					</div>
 					<div class="req-item-right">
-						<span class="badge {f.context === 'store' ? 'badge-blue' : 'badge-grey'}">
-							{f.context === 'store' ? 'Store' : 'Case'}
+						<span class="badge {a.scope === 'store' ? 'badge-blue' : 'badge-grey'}">
+							{a.scope === 'store' ? 'Store' : 'Case'}
 						</span>
-						<span class="req-item-time">Upload →</span>
+						<span class="req-item-time">{a.todos.some((t) => t.kind === 'onboarding') ? 'Provide info →' : 'Upload →'}</span>
 					</div>
 				</a>
 			{/each}
-			{#if data.requiredSummary.pending > data.requiredFiles.length}
+			{#if data.actionSummary.rows > data.actions.length}
 				<div class="req-more">
-					+ {data.requiredSummary.pending - data.requiredFiles.length} more pending — upload from each store or case
+					+ {data.actionSummary.rows - data.actions.length} more with actions pending — open each store or case
 				</div>
 			{/if}
 		</div>
@@ -192,6 +190,7 @@
 								<td>
 									<div class="case-num">{c.CaseNumber}</div>
 									<div class="case-sub">{c.recordTypeName ?? c.Subject ?? '—'}</div>
+									<CaseStepsCell steps={c.steps} closed={/closed|resolved/i.test(c.Status)} />
 								</td>
 								<td>{c.storeName ?? '—'}</td>
 								<td><span class={`badge ${badgeClass(c.Status)}`}>{c.Status}</span></td>
@@ -316,6 +315,8 @@
 	.req-item-sub { font-size: 12px; color: var(--grey-text); line-height: 1.4; }
 	.req-item-right { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; flex-shrink: 0; }
 	.req-item-time { font-size: 11px; color: var(--grey-text); }
+	.req-todos { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 2px; font-size: 12px; font-weight: 500; color: #b45309; }
+	.req-todos li::before { content: '• '; }
 	.req-more { padding: 10px 20px; font-size: 12px; color: var(--grey-text); background: #fafbfc; }
 
 	/* ── Card / grid ──────────────────────────────────────── */

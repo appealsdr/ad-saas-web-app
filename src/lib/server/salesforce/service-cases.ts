@@ -8,6 +8,7 @@
  */
 import { sfdcQuery, sobjectCreate, SalesforceApiError } from './client';
 import { logError } from '../error_log';
+import { createOnboardingDocsRequiredFile } from './onboarding-docs';
 import type { CaseSummary } from './cases';
 
 const CASE_OBJECT = 'Case';
@@ -76,6 +77,8 @@ export async function createServiceCase(
 			});
 			return { ok: false, error };
 		}
+		// Every app-created case starts with an "Onboarding Documents" slot (best-effort).
+		await createOnboardingDocsRequiredFile(created.id, context);
 		return { ok: true, id: created.id };
 	} catch (e) {
 		const isSfErr = e instanceof SalesforceApiError;

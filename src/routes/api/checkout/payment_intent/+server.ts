@@ -21,7 +21,7 @@ import { json, error } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { getStripe } from '$lib/server/stripe';
 import { getOrCreateStripeCustomer } from '$lib/server/stripe_customer';
-import { getCatalogProduct, dueNow, balanceLater, type CatalogProduct } from '$lib/server/salesforce';
+import { getCatalogProduct, parseRecurringOptions, dueNow, balanceLater, type CatalogProduct } from '$lib/server/salesforce';
 import { logError, describeError } from '$lib/server/error_log';
 import { sql } from '$lib/server/db';
 
@@ -29,6 +29,8 @@ interface Body {
 	pricebookEntryIds?: string[];
 	storeId?: string | null;
 	kind?: string | null;
+	termMonths?: number | null;
+	payOption?: string | null;
 }
 
 const MAX_LINE_ITEMS = 20;
@@ -43,7 +45,10 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 		throw error(400, 'Body must be JSON.');
 	}
 
-	const kind: 'service' | 'subscription' = body.kind === 'subscription' ? 'subscription' : 'service';
+	const kind: 'service' | 'subscription' | 'recurring' =
+		body.kind === 'subscription' ? 'subscription' : body.kind === 'recurring' ? 'recurring' : 'service';
+	const recurring = kind === 'recurring' ? parseRecurringOptions(body.termMonths, body.payOption) : null;
+	if (kind === 'recurring' && !recurring) throw error(400, 'Choose a valid term and payment option.');
 
 	// NOT deduped — the same service can be purchased more than once in one
 	// order (e.g. the same line item for several locations); each repeated id
@@ -71,7 +76,7 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 
 	// Look up every product server-side. Drop anything that disappeared from
 	// the catalog (e.g. deactivated since the user added it to selection).
-	const lookups = await Promise.all(ids.map((id) => getCatalogProduct(id, kind)));
+	const lookups = await Promise.all(ids.map((id) => getCatalogProduct(id, kind, recurring)));
 	const products: CatalogProduct[] = [];
 	const missing: string[] = [];
 	lookups.forEach((p, i) => (p ? products.push(p) : missing.push(ids[i])));
@@ -137,7 +142,8 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 				pricebook_entry_ids: products.map((p) => p.pricebookEntryId).join(','),
 				balance_cents: String(products.reduce((s, p) => s + Math.round(balanceLater(p) * 100), 0)),
 				product_ids: products.map((p) => p.productId).join(','),
-				kind
+				kind,
+				...(recurring ? { term_months: String(recurring.termMonths), pay_option: recurring.payOption } : {})
 			}
 		});
 

@@ -12,6 +12,9 @@
  * The two price book NAMES come from env (.env.example):
  *   SFDC_PRICE_SERVICE       (default 'SERVICE')
  *   SFDC_PRICE_SUBSCRIPTION  (default 'SUBSCRIPTION')
+ * Recurring products use a third, OPTIONAL price book:
+ *   SFDC_PRICE_RECURRING     (no default — when unset or the book is empty/missing, the
+ *                             "Recurring products" tab is simply not shown)
  *
  * Results are cached in-process for 5 minutes so a busy /services page doesn't
  * hammer SF (and avoids API limits). Hot-swap to Redis when we go multi-instance.
@@ -54,7 +57,15 @@ export interface CatalogProduct {
 	/** Per-unit deposit amount; only set when paymentType is 'Deposit'. */
 	depositAmount: number | null;
 	currency: string;              // default 'USD' — orgs without multi-currency don't expose CurrencyIsoCode
+	/** Recurring products only: the price book's monthly UnitPrice (unitPrice is then monthly × term). */
+	monthlyPrice?: number;
+	/** Recurring products only: contract term in months chosen at checkout (→ ServiceContract.Term). */
+	termMonths?: number;
 }
+
+export type RecurringPayOption = 'full' | 'monthly';
+export const RECURRING_TERMS = [1, 3, 6, 12, 18, 24, 36] as const;
+export const MAX_RECURRING_TERM = 36;
 
 export interface CatalogCategory {
 	category: string;              // human-readable label; "Uncategorized" when null
@@ -86,6 +97,11 @@ function getPricebookName(kind: 'service' | 'subscription'): string {
 			? env.SFDC_PRICE_SERVICE
 			: env.SFDC_PRICE_SUBSCRIPTION;
 	return (fromEnv?.trim() || (kind === 'service' ? 'SERVICE' : 'Subscriptions'));
+}
+
+/** Recurring price book name, or null when SFDC_PRICE_RECURRING is not configured. */
+function getRecurringPricebookName(): string | null {
+	return env.SFDC_PRICE_RECURRING?.trim() || null;
 }
 
 function readDeposit(r: PricebookEntryRow): { paymentType: 'Full' | 'Deposit'; depositAmount: number | null } {
@@ -170,7 +186,7 @@ async function fetchCatalog(pricebookName: string): Promise<CatalogCategory[]> {
 async function getCached(
 	cacheKey: string,
 	pricebookName: string,
-	operation: 'list_services' | 'list_subscriptions'
+	operation: 'list_services' | 'list_subscriptions' | 'list_recurring'
 ): Promise<CatalogCategory[]> {
 	const hit = cache.get(cacheKey);
 	if (hit && hit.expiresAt > Date.now()) return hit.value;
@@ -206,15 +222,67 @@ export function listSubscriptions(): Promise<CatalogCategory[]> {
 	return getCached(`subscription:${name}`, name, 'list_subscriptions');
 }
 
-/** Look up a single product from either pricebook by PricebookEntry Id. */
+/**
+ * Recurring products from the SFDC_PRICE_RECURRING price book, grouped by Category__c.
+ * Empty when the env var is unset or the price book doesn't exist / has no active entries.
+ */
+export function listRecurring(): Promise<CatalogCategory[]> {
+	const name = getRecurringPricebookName();
+	if (!name) return Promise.resolve([]);
+	return getCached(`recurring:${name}`, name, 'list_recurring');
+}
+
+/** Term + payment option picked at checkout for a recurring product. */
+export interface RecurringOptions {
+	termMonths: number;
+	payOption: RecurringPayOption;
+}
+
+/** Parse + validate term/pay from untrusted input; null when invalid. */
+export function parseRecurringOptions(term: unknown, pay: unknown): RecurringOptions | null {
+	const termMonths = Number(term);
+	if (!Number.isInteger(termMonths) || termMonths < 1 || termMonths > MAX_RECURRING_TERM) return null;
+	if (pay !== 'full' && pay !== 'monthly') return null;
+	return { termMonths, payOption: pay };
+}
+
+/**
+ * Re-express a recurring entry (price book UnitPrice = price per month, per unit) so the existing
+ * checkout maths works unchanged:
+ *   unitPrice     = monthly × term            (the whole contract value of one unit)
+ *   pay in full   → charged now = unitPrice   ((quantity × price) × term)
+ *   pay monthly   → modelled as a "Deposit" of one month; dueNow = monthly (quantity × price),
+ *                   balanceLater = monthly × (term − 1) — not charged at checkout.
+ */
+function applyRecurringOptions(p: CatalogProduct, o: RecurringOptions): CatalogProduct {
+	const monthly = p.unitPrice;
+	const termMonths = o.termMonths;
+	const total = Math.round(monthly * termMonths * 100) / 100;
+	return {
+		...p,
+		unitPrice: total,
+		monthlyPrice: monthly,
+		termMonths,
+		paymentType: o.payOption === 'monthly' ? 'Deposit' : 'Full',
+		depositAmount: o.payOption === 'monthly' ? monthly : null
+	};
+}
+
+/**
+ * Look up a single product by PricebookEntry Id. For kind 'recurring' pass `recurring` (term +
+ * pay option): the returned product is already priced for that term/payment option.
+ */
 export async function getCatalogProduct(
 	pricebookEntryId: string,
-	kind: 'service' | 'subscription'
+	kind: 'service' | 'subscription' | 'recurring',
+	recurring?: RecurringOptions | null
 ): Promise<CatalogProduct | null> {
-	const cats = kind === 'service' ? await listServices() : await listSubscriptions();
+	if (kind === 'recurring' && !recurring) return null;
+	const cats =
+		kind === 'service' ? await listServices() : kind === 'subscription' ? await listSubscriptions() : await listRecurring();
 	for (const cat of cats) {
 		const p = cat.products.find((x) => x.pricebookEntryId === pricebookEntryId);
-		if (p) return p;
+		if (p) return kind === 'recurring' ? applyRecurringOptions(p, recurring!) : p;
 	}
 	return null;
 }

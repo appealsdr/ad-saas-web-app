@@ -58,12 +58,15 @@ export type { AccountContactInput, AccountContactResult, SyncContext } from './s
 export {
 	listServices,
 	listSubscriptions,
+	listRecurring,
 	getCatalogProduct,
+	parseRecurringOptions,
+	RECURRING_TERMS,
 	dueNow,
 	balanceLater,
 	invalidatePricebookCache
 } from './pricebook';
-export type { CatalogProduct, CatalogCategory } from './pricebook';
+export type { CatalogProduct, CatalogCategory, RecurringOptions, RecurringPayOption } from './pricebook';
 
 export {
 	fetchSalesforceAccount,
@@ -86,11 +89,16 @@ export type { StoreFields, SfStoreResult, StoreMetrics } from './stores';
 
 export { VUID_FIELD, isVuidBlank, withVuidBackfill } from './vuid';
 
-export { createServiceContractWithLines } from './contracts';
+export { createServiceContractWithLines, buildRecurringLines, recurringMonthDescription, addMonthsClamped } from './contracts';
 export type { ServiceContractInput, ServiceContractResult } from './contracts';
 
 export { createServiceCase, listCasesForContract, getCaseCustomRecordTypeId } from './service-cases';
 export type { ServiceCaseInput, ServiceCaseResult } from './service-cases';
+
+export { fetchCaseOnboarding, saveCaseOnboarding, listOnboardingStatusForCases } from './case-onboarding';
+export type { CaseOnboarding, OnboardingField, OnboardingFieldType } from './case-onboarding';
+export { getCaseSteps } from './case-steps';
+export type { CaseSteps } from './case-steps';
 
 export { createPayment } from './payments';
 export type { PaymentInput, PaymentResult } from './payments';

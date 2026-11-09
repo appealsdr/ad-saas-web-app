@@ -7,7 +7,7 @@
  *   ContactId    (standard lookup)  — local users.sfdc_contact_id
  *   Store__c     (custom lookup)    — local stores.sfdc_store_id
  *   Name                            — "<Store Name> <YYYY-MM-DD> Services"
- *   StartDate                       — PaymentIntent.created
+ *   StartDate                       — when the first payment was received (Stripe charge time; subscriptions: activation)
  *   EndDate                         — StartDate + Term months
  *   Term                            — 3
  *   Pricebook2Id                    — SERVICE pricebook
@@ -43,7 +43,7 @@ export interface ServiceContractInput {
 	 * plan). Cases are only auto-created for 'service' — a subscription's Cases
 	 * are opened manually by technicians in Salesforce, not by this app.
 	 */
-	kind: 'service' | 'subscription';
+	kind: 'service' | 'subscription' | 'recurring';
 	sfdcAccountId: string;
 	sfdcContactId: string | null;
 	sfdcStoreId: string | null;
@@ -61,7 +61,7 @@ export interface ServiceContractInput {
 	};
 	lineItems: Array<{
 		pricebookEntryId: string;
-		quantity: number;
+		quantity: number;                // recurring: the term in months (UnitPrice is then the monthly price)
 		unitPrice: number;
 		name: string;                    // service name → Case.Subject
 		/**
@@ -69,6 +69,18 @@ export interface ServiceContractInput {
 		 * Pending Payment__c linked to this ContractLineItem, collected when the case is completed.
 		 */
 		balanceDue?: number;
+		/** ContractLineItem.Description (recurring: which month of the term this line is). */
+		description?: string;
+		/**
+		 * Recurring "pay by month": this line is one month's instalment. 'paid' = collected by the checkout charge;
+		 * 'due' = a future month (a Not Active payment, Payment_Date__c = its due date). Lines with an instalment
+		 * get their own Payment__c linked to the ContractLineItem instead of the contract-level checkout payment.
+		 */
+		installment?: { status: 'paid' | 'due'; dueDate: Date };
+		/** Recurring: 1-based month number (pay in full also uses it, to keep the checkout description to one line per product). */
+		monthIndex?: number;
+		/** Don't open a Case for this line (later months of a recurring contract share the first month's Case). */
+		skipCase?: boolean;
 	}>;
 	sfdcStoreContactId?: string | null;  // store point of contact → Case.ContactId
 	localContractId?: string;          // → appealsdoctor_vuid__c
@@ -91,6 +103,49 @@ function toSfDate(d: Date): string {
 function addMonths(d: Date, months: number): Date {
 	const out = new Date(d.getTime());
 	out.setUTCMonth(out.getUTCMonth() + months);
+	return out;
+}
+
+/** addMonths that stays in the target month (Jan 31 + 1 month = Feb 28, not Mar 3). */
+export function addMonthsClamped(d: Date, months: number): Date {
+	const out = new Date(d.getTime());
+	const day = out.getUTCDate();
+	out.setUTCDate(1);
+	out.setUTCMonth(out.getUTCMonth() + months);
+	const lastDay = new Date(Date.UTC(out.getUTCFullYear(), out.getUTCMonth() + 1, 0)).getUTCDate();
+	out.setUTCDate(Math.min(day, lastDay));
+	return out;
+}
+
+const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+
+/** "Month 2 of 6 — July 2026": the ContractLineItem description of a recurring month. */
+export function recurringMonthDescription(monthIndex: number, termMonths: number, startDate: Date): string {
+	const d = addMonthsClamped(startDate, monthIndex - 1);
+	return `Month ${monthIndex} of ${termMonths} — ${MONTH_NAMES[d.getUTCMonth()]} ${d.getUTCFullYear()}`;
+}
+
+export interface RecurringGroup { pricebookEntryId: string; name: string; quantity: number; monthlyPrice: number }
+
+/**
+ * Recurring contract lines: a line per product per month of the term. `quantity` is the number of units bought
+ * and `unitPrice` the monthly price, so a line is that month's charge ($100 × 5 = $500). 'monthly': month 1 is the
+ * paid instalment, the rest are 'due' on start + (month − 1) months. 'full': the same lines, no instalments —
+ * the whole term was charged at checkout as one contract-level payment.
+ */
+export function buildRecurringLines(
+	groups: RecurringGroup[], termMonths: number, startDate: Date, payOption: 'full' | 'monthly'
+): ServiceContractInput['lineItems'] {
+	const out: ServiceContractInput['lineItems'] = [];
+	for (let m = 1; m <= termMonths; m++) {
+		for (const g of groups) {
+			out.push({
+				pricebookEntryId: g.pricebookEntryId, quantity: g.quantity, unitPrice: g.monthlyPrice, name: g.name,
+				description: recurringMonthDescription(m, termMonths, startDate), monthIndex: m, skipCase: m > 1,
+				...(payOption === 'monthly' ? { installment: { status: m === 1 ? 'paid' as const : 'due' as const, dueDate: addMonthsClamped(startDate, m - 1) } } : {})
+			});
+		}
+	}
 	return out;
 }
 
@@ -186,6 +241,7 @@ export async function populateContract(
 				Quantity: monthly ? input.termMonths : li.quantity,
 				UnitPrice: monthly ? Math.round(((li.unitPrice * li.quantity) / input.termMonths) * 100) / 100 : li.unitPrice
 			};
+			if (li.description) payload.Description = li.description;
 			try {
 				const res = await sobjectCreate('ContractLineItem', payload);
 				if (!res.success) {
@@ -222,7 +278,7 @@ export async function populateContract(
 		await Promise.all(
 			input.lineItems.map(async (li, i) => {
 				const lineItemId = lineItemIds[i];
-				if (!lineItemId || caseByLine.has(lineItemId)) return; // CLI failed → no case; or case already exists
+				if (!lineItemId || li.skipCase || caseByLine.has(lineItemId)) return; // CLI failed → no case; or case already exists
 				const res = await createServiceCase(
 					{
 						sfdcContractId: sfdcServiceContractId, sfdcContractLineItemId: lineItemId, subject: li.name,
@@ -261,15 +317,18 @@ export async function populateContract(
 		);
 
 	// 4. ONE contract-level payment for what was actually charged, itemised. Paid only because the Stripe charge succeeded.
+	// Recurring pay-by-month: every month is its own Payment__c on its own line (step 4b); no contract-level payment.
+	const installmentMode = input.lineItems.some((li) => !!li.installment);
 	let haveCheckout = hasCheckout;
-	if (!hasCheckout) {
+	if (!hasCheckout && !installmentMode) {
 		const checkout = (description: string) =>
 			createPayment(
 				{
 					amount: input.stripe.amount, currency: input.stripe.currency, description,
 					paymentType: 'Service Contract',
 					stripe: { paymentIntentId: input.stripe.paymentIntentId, paymentMethodId: input.stripe.paymentMethodId },
-					sfdcServiceContractId, sfdcCaseId: firstCaseId, orderRef: localRef ? checkoutRef(localRef) : null
+					sfdcServiceContractId, sfdcCaseId: firstCaseId, orderRef: localRef ? checkoutRef(localRef) : null,
+					paymentDate: input.startDate // Payment_Date__c = the day the client paid via Stripe
 				},
 				context
 			);
@@ -277,6 +336,39 @@ export async function populateContract(
 		// The collected payment is the record that matters most — never lose it to a description problem.
 		if (!res.ok) res = await checkout(`Checkout payment of ${formatMoney(input.stripe.amount, input.stripe.currency)}`);
 		if (res.ok) { made.payments++; haveCheckout = true; }
+	}
+
+	// 4b. Pay by month: one Payment__c per month, linked to that month's ContractLineItem. Month 1 is the checkout charge
+	//     (Paid, Payment_Date__c = the start date = the Stripe payment day); later months are Not Active 'Balance'
+	//     payments dated when they fall due — Payment_Date__c becomes the actual Stripe date when the client pays them.
+	if (installmentMode) {
+		await Promise.all(
+			input.lineItems.map(async (li, i) => {
+				const lineItemId = lineItemIds[i];
+				if (!lineItemId || !li.installment) return;
+				const amount = Math.round(li.unitPrice * li.quantity * 100) / 100;
+				const paid = li.installment.status === 'paid';
+				const ref = localRef ? `${localRef}:installment:${i}` : null;
+				const exists = existingPays.some(
+					(p) => (paid && p.Stripe_Payment_Intent_Id__c === input.stripe.paymentIntentId) || (ref && p.Order_Ref__c === ref) ||
+						(!paid && p.Contract_Line_Item__c === lineItemId && p.Payment_Type__c === 'Balance')
+				);
+				if (exists) { if (paid) haveCheckout = true; return; }
+				const res = await createPayment(
+					{
+						amount, currency: input.stripe.currency,
+						description: `${li.name} — ${li.description ?? 'monthly payment'}`,
+						paymentType: paid ? 'Service Contract' : 'Balance', status: paid ? 'Paid' : 'Not Active',
+						...(paid ? { stripe: { paymentIntentId: input.stripe.paymentIntentId, paymentMethodId: input.stripe.paymentMethodId }, paidAt: input.startDate } : {}),
+						paymentDate: paid ? input.startDate : li.installment.dueDate,
+						sfdcServiceContractId, sfdcContractLineItemId: lineItemId,
+						sfdcCaseId: caseByLine.get(lineItemId) ?? firstCaseId, orderRef: ref
+					},
+					context
+				);
+				if (res.ok) { made.payments++; if (paid) haveCheckout = true; }
+			})
+		);
 	}
 
 	// 5. Deposit services: one balance payment per line for the part not charged yet — created Not Active,
@@ -347,9 +439,10 @@ export function buildCheckoutPaymentDescription(input: ServiceContractInput): st
 	const groups = new Map<string, { label: string; qty: number; now: number }>();
 	for (const li of input.lineItems) {
 		const now = li.unitPrice * li.quantity - (li.balanceDue ?? 0);
+		if (li.installment && li.installment.status === 'due') continue; // not charged at checkout
 		const label = (li.balanceDue ?? 0) > 0 ? `${li.name} deposit` : `${li.name} in full`;
 		const g = groups.get(label) ?? { label, qty: 0, now: 0 };
-		g.qty += 1;
+		if ((li.monthIndex ?? 1) <= 1) g.qty += 1; // later months of the same product are part of that one line
 		g.now += now;
 		groups.set(label, g);
 	}

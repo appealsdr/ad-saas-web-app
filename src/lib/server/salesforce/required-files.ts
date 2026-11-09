@@ -230,7 +230,8 @@ export async function attachUploadToRequiredFile(
 			region: input.region,
 			fileName: input.fileName,
 			contentType: input.contentType,
-			sizeBytes: input.sizeBytes
+			sizeBytes: input.sizeBytes,
+			requiredFileId: input.requiredFileId
 		},
 		context
 	);
