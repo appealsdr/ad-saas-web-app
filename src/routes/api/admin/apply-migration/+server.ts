@@ -34,7 +34,10 @@ const MIGRATION_ALLOWLIST = [
 	'027_subscription_cancel_requested.sql',
 	'028_line_item_balance_due.sql',
 	'029_balance_payment_applications.sql',
-	'030_standalone_admin_accounts.sql'
+	'030_standalone_admin_accounts.sql',
+	'031_case_documents_multi_file.sql',
+	'032_store_documents_multi_file.sql',
+	'033_line_item_installments.sql'
 ];
 
 function safeEqual(a: string, b: string): boolean {
