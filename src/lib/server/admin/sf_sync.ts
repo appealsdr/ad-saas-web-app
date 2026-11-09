@@ -366,6 +366,7 @@ async function contractInput(accountId: string, c: ContractRowFull): Promise<Ser
 			...(l.month_index != null
 				? {
 					description: recurringMonthDescription(l.month_index, c.term_months, c.start_date), monthIndex: l.month_index, skipCase: l.month_index > 1,
+					...(l.month_index === 1 ? { caseCount: Math.max(1, Math.floor(l.quantity)) } : {}),
 					...(monthly ? { installment: { status: (l.month_index === 1 ? 'paid' : 'due') as 'paid' | 'due', dueDate: l.payment_due_date ?? addMonthsClamped(c.start_date, l.month_index - 1) } } : {})
 				}
 				: { balanceDue: Number(l.balance_due) })
@@ -397,12 +398,15 @@ async function repairContract(accountId: string, c: ContractRowFull): Promise<st
 		return i >= 0 ? pool.splice(i, 1)[0].Id : '';
 	});
 	const caseByLine = new Map(cases.records.filter((x) => x.Contract_Line_Item__c).map((x) => [x.Contract_Line_Item__c!, x.Id]));
+	const caseCountByLine = new Map<string, number>();
+	for (const x of cases.records) if (x.Contract_Line_Item__c) caseCountByLine.set(x.Contract_Line_Item__c, (caseCountByLine.get(x.Contract_Line_Item__c) ?? 0) + 1);
 	const out = await populateContract(
 		sfId,
 		input,
 		{
 			lineItemIds,
 			caseByLine,
+			caseCountByLine,
 			anyCaseId: cases.records[0]?.Id ?? null
 		},
 		{ accountId },

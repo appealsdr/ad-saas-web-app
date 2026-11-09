@@ -48,7 +48,10 @@ describe('recurring contract structure', () => {
 		const due = pays.filter((p) => p.body.Status__c === 'Not Active');
 		expect(due.map((p) => p.body.Payment_Date__c)).toEqual(['2026-02-28', '2026-03-31', '2026-04-30', '2026-05-31', '2026-06-30']);
 		expect(due.every((p) => p.body.Contract_Line_Item__c && !p.body.Stripe_Payment_Intent_Id__c)).toBe(true);
-		expect(m.created.filter((c) => c.object === 'Case')).toHaveLength(1);
+		// 5 units bought → 5 Cases, all on month 1's line item (months 2..6 share them).
+		const cases = m.created.filter((c) => c.object === 'Case');
+		expect(cases).toHaveLength(5);
+		for (const c of cases) expect(c.body.Contract_Line_Item__c).toBe(lines[0].id);
 	});
 
 	it('pay in full: 6 lines, ONE $3000 payment on the contract dated the Stripe payment day', async () => {
