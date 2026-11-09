@@ -45,7 +45,7 @@
 	// Line payments are components of the contract's First Payment, so only
 	// top-level payments are invoices and count toward totals.
 	$: topPays = data.payments.filter((p) => !p.isLine);
-	$: svc = (c: Con) => c.lines.map((l) => l.name).join(' + ') || (c.kind === 'subscription' ? 'Subscription' : 'Service contract');
+	$: svc = (c: Con) => c.name || c.lines.map((l) => l.name).join(' + ') || (c.kind === 'subscription' ? 'Subscription' : 'Service contract');
 	$: conTotal = (c: Con) => (c.lines.length ? c.lines.reduce((n, l) => n + l.qty * l.unit, 0) : c.amount);
 
 	$: paidSum = topPays.filter((p) => p.status === 'paid').reduce((n, p) => n + p.amount, 0);

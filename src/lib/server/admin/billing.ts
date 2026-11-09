@@ -37,11 +37,11 @@ export interface AdminContract {
 }
 
 interface SfPayment {
-	Id: string; Name: string; Amount__c: number | null; Status__c: string | null; Payment_Type__c: string | null; PaidAt__c: string | null;
+	Id: string; Name: string; Amount__c: number | null; Status__c: string | null; Payment_Type__c: string | null; PaidAt__c: string | null; Payment_Date__c: string | null;
 	Description__c: string | null; CreatedDate: string; Stripe_Payment_Intent_Id__c: string | null; Service_Contract__c: string | null; Contract_Line_Item__c: string | null;
 }
 
-export const PAYMENT_FIELDS = `Id, Name, Amount__c, Total_Paid__c, Status__c, Payment_Type__c, PaidAt__c, Description__c, CreatedDate, LastModifiedDate,
+export const PAYMENT_FIELDS = `Id, Name, Amount__c, Total_Paid__c, Status__c, Payment_Type__c, PaidAt__c, Payment_Date__c, Description__c, CreatedDate, LastModifiedDate,
 	Stripe_Payment_Intent_Id__c, Stripe_Checkout_Session_Id__c, Payment_Method__c, Service_Contract__c, Contract_Line_Item__c`;
 
 export const mapPayStatus = (s: string | null, isBalance = false): PayStatus => {
@@ -97,7 +97,7 @@ export async function accountContracts(accountId: string, opts: { storeId?: stri
 				key: p.Id, sfId: p.Id, name: p.Name || p.Id, contractId: r.id, contractRef: ref(r.id), storeName: r.store_name,
 				kind: p.Payment_Type__c === 'Balance' ? `Balance${p.Description__c ? ` · ${p.Description__c}` : ''}` : p.Contract_Line_Item__c ? `Line payment${p.Description__c ? ` · ${p.Description__c}` : ''}` : p.Payment_Type__c || 'First Payment',
 				amount: Number(p.Amount__c ?? 0), status: mapPayStatus(p.Status__c, p.Payment_Type__c === 'Balance'), statusRaw: p.Status__c ?? 'Pending',
-				date: (p.PaidAt__c || p.CreatedDate).slice(0, 10), stripePi: p.Stripe_Payment_Intent_Id__c, isLine: !!p.Contract_Line_Item__c && p.Payment_Type__c !== 'Balance'
+				date: (p.PaidAt__c || p.Payment_Date__c || p.CreatedDate).slice(0, 10), stripePi: p.Stripe_Payment_Intent_Id__c, isLine: !!p.Contract_Line_Item__c && p.Payment_Type__c !== 'Balance'
 			}));
 		if (!payments.length) {
 			payments.push({
