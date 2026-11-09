@@ -81,6 +81,8 @@ export interface ServiceContractInput {
 		monthIndex?: number;
 		/** Don't open a Case for this line (later months of a recurring contract share the first month's Case). */
 		skipCase?: boolean;
+		/** How many Cases to open for this line (default 1). Recurring month 1 opens one per unit bought. */
+		caseCount?: number;
 	}>;
 	sfdcStoreContactId?: string | null;  // store point of contact → Case.ContactId
 	localContractId?: string;          // → appealsdoctor_vuid__c
@@ -142,6 +144,8 @@ export function buildRecurringLines(
 			out.push({
 				pricebookEntryId: g.pricebookEntryId, quantity: g.quantity, unitPrice: g.monthlyPrice, name: g.name,
 				description: recurringMonthDescription(m, termMonths, startDate), monthIndex: m, skipCase: m > 1,
+				// One Case per unit bought, all linked to month 1's line item; months 2..N reuse those same Cases.
+				...(m === 1 ? { caseCount: Math.max(1, Math.floor(g.quantity)) } : {}),
 				...(payOption === 'monthly' ? { installment: { status: m === 1 ? 'paid' as const : 'due' as const, dueDate: addMonthsClamped(startDate, m - 1) } } : {})
 			});
 		}
@@ -190,6 +194,8 @@ export interface ExistingContractRecords {
 	lineItemIds?: string[];
 	/** ContractLineItem Id → Case Id for cases that already exist. */
 	caseByLine?: Map<string, string>;
+	/** ContractLineItem Id → how many Cases already exist for it (so a repair only adds the missing ones). */
+	caseCountByLine?: Map<string, number>;
 	/** Any case on the contract (used for payments of lines that have none). */
 	anyCaseId?: string | null;
 }
@@ -278,16 +284,20 @@ export async function populateContract(
 		await Promise.all(
 			input.lineItems.map(async (li, i) => {
 				const lineItemId = lineItemIds[i];
-				if (!lineItemId || li.skipCase || caseByLine.has(lineItemId)) return; // CLI failed → no case; or case already exists
-				const res = await createServiceCase(
-					{
-						sfdcContractId: sfdcServiceContractId, sfdcContractLineItemId: lineItemId, subject: li.name,
-						sfdcAccountId: input.sfdcAccountId, sfdcStoreId: input.sfdcStoreId,
-						sfdcContactId: input.sfdcStoreContactId ?? input.sfdcContactId
-					},
-					context
-				);
-				if (res.ok) { caseByLine.set(lineItemId, res.id); made.cases++; }
+				if (!lineItemId || li.skipCase) return; // CLI failed → no case
+				const wanted = Math.max(1, li.caseCount ?? 1);
+				const have = existing.caseCountByLine?.get(lineItemId) ?? (caseByLine.has(lineItemId) ? 1 : 0);
+				for (let n = have; n < wanted; n++) {
+					const res = await createServiceCase(
+						{
+							sfdcContractId: sfdcServiceContractId, sfdcContractLineItemId: lineItemId, subject: li.name,
+							sfdcAccountId: input.sfdcAccountId, sfdcStoreId: input.sfdcStoreId,
+							sfdcContactId: input.sfdcStoreContactId ?? input.sfdcContactId
+						},
+						context
+					);
+					if (res.ok) { if (!caseByLine.has(lineItemId)) caseByLine.set(lineItemId, res.id); made.cases++; }
+				}
 			})
 		);
 	}
