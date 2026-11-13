@@ -115,7 +115,7 @@
 			</div>
 			{#each data.outstanding as c (c.id)}
 				<div class="out-contract">
-					<svelte:element this={c.payHref ? 'a' : 'div'} class="out-head" href={c.payHref ?? undefined}>
+					<a class="out-head" href={c.payHref}>
 						<div>
 							<div class="out-name">{c.name}</div>
 							<div class="out-sub">
@@ -124,9 +124,9 @@
 						</div>
 						<div class="out-total">
 							${c.totalDue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-							{#if c.payHref}<span class="out-pay">Pay →</span>{/if}
+							<span class="out-pay">View & pay →</span>
 						</div>
-					</svelte:element>
+					</a>
 					{#each c.payments as p (p.id)}
 						<div class="out-row">
 							<span>{p.description ?? p.name}{p.dueDate ? ` · due ${p.dueDate}` : ''}</span>

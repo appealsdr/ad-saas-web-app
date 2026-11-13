@@ -1,6 +1,8 @@
 <script lang="ts">
 	import Topbar from '$components/layout/Topbar.svelte';
 	import { page } from '$app/stores';
+	import { goto } from '$app/navigation';
+	import { browser } from '$app/environment';
 	import type { PageData } from './$types';
 
 	export let data: PageData;
@@ -37,6 +39,23 @@
 	let search = '';
 	let conId: string | null = $page.url.searchParams.get('contract');
 	let invId: string | null = null;
+
+	// Keep ?contract=<id> in the URL in step with the open contract (shareable, back button works).
+	let lastSynced: string | null = conId;
+	function onUrl(q: string | null) {
+		if (q === lastSynced) return;
+		lastSynced = q;
+		conId = q;
+	}
+	function onContract(id: string | null) {
+		if (!browser || id === lastSynced) return;
+		lastSynced = id;
+		const u = new URL(window.location.href);
+		if (id) u.searchParams.set('contract', id); else u.searchParams.delete('contract');
+		goto(u, { keepFocus: true, noScroll: true });
+	}
+	$: onUrl($page.url.searchParams.get('contract'));
+	$: onContract(conId);
 	let toast: string | null = null;
 	const q = $page.url.searchParams;
 	const flash = q.get('paid') ? `Payment received — thank you. ${q.get('paid') !== '1' ? q.get('paid') + ' is now paid.' : ''}` : q.get('payment') === 'failed' ? 'The payment did not go through. You have not been charged — please try again.' : q.get('payment') === 'processing' ? 'Your payment is still processing. It will show as Paid shortly.' : null;
