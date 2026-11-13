@@ -105,9 +105,10 @@
 		</div>
 	</div>
 
+	<div class="grid-2 top-row" class:one={data.outstanding.length === 0 || data.actions.length === 0}>
 	<!-- ─── Outstanding payments: contracts awaiting payment ────── -->
 	{#if data.outstanding.length > 0}
-		<div class="card" style="margin-bottom:20px">
+		<div class="card out-card">
 			<div class="card-title">
 				Outstanding Payments
 				<a href="/payments" class="hdr-link" style="margin-left:auto">All payments →</a>
@@ -130,11 +131,7 @@
 						<div class="out-row">
 							<span>{p.description ?? p.name}{p.dueDate ? ` · due ${p.dueDate}` : ''}</span>
 							<span>${p.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-							{#if p.payable}
-								<a class="btn btn-primary btn-sm" href={`/payments/pay/${p.id}`}>Pay</a>
-							{:else}
-								<span class="badge badge-grey">{p.status === 'Failed' ? 'Failed' : 'Not ready yet'}</span>
-							{/if}
+							<a class="btn btn-primary btn-sm" href={`/payments/pay/${p.id}`}>Pay</a>
 						</div>
 					{/each}
 				</div>
@@ -188,6 +185,7 @@
 			All {data.requiredSummary.total} required files uploaded ✓
 		</div>
 	{/if}
+	</div>
 
 	<!-- ─── Two-column: Recent Cases + Recent Activity ────────── -->
 	<div class="grid-2">
@@ -368,6 +366,10 @@
 
 	/* ── Card / grid ──────────────────────────────────────── */
 	.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+	.top-row { margin-bottom: 20px; align-items: start; }
+	.top-row.one { grid-template-columns: 1fr; }
+	.top-row .req-action-card, .top-row .out-card { margin-bottom: 0; }
+	@media (max-width: 900px) { .top-row { grid-template-columns: 1fr; } }
 	.card {
 		background: white; border: 1px solid var(--grey-line);
 		border-radius: var(--radius); padding: 18px 20px;

@@ -30,7 +30,8 @@ export interface OutstandingContract {
 	payHref: string | null;
 }
 
-const UNPAID = ['Request Payment', 'Pending', 'Failed'];
+// Only ACTIVE payments (collectible now). Pending / Not Active / Failed ones are not shown on the dashboard.
+const UNPAID = [STATUS_REQUEST];
 
 export async function listOutstandingContracts(sfdcAccountId: string | null): Promise<OutstandingContract[]> {
 	if (!sfdcAccountId || !isSfId(sfdcAccountId)) return [];
