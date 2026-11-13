@@ -19,6 +19,7 @@ import {
 	listOnboardingStatusForCases,
 	getCaseSteps
 } from '$lib/server/salesforce';
+import { listOutstandingContracts } from '$lib/server/payments/outstanding';
 import { sanitizeMessageHtml } from '$lib/server/sanitize';
 
 const RECENT_CASES_LIMIT = 6;
@@ -297,7 +298,15 @@ export const load: PageServerLoad = async ({ locals }) => {
 	}));
 	const commentsError = commentsResult.ok ? null : commentsResult.error;
 
+	let outstanding: Awaited<ReturnType<typeof listOutstandingContracts>> = [];
+	try {
+		outstanding = await listOutstandingContracts(account?.sfdc_account_id ?? null);
+	} catch {
+		outstanding = []; // best-effort: never break the dashboard
+	}
+
 	return {
+		outstanding,
 		account: account
 			? {
 					id: account.id,

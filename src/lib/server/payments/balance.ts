@@ -41,7 +41,15 @@ export async function getOwnedPayment(accountId: string, sfPaymentId: string): P
 	if (!p?.Service_Contract__c) return null;
 	const [c] = await sql<{ id: string; currency: string }[]>`
 		SELECT id, currency FROM service_contracts WHERE account_id = ${accountId} AND sfdc_service_contract_id = ${p.Service_Contract__c} LIMIT 1`;
-	return c ? { payment: p, contractId: c.id, currency: c.currency, accountId } : null;
+	if (c) return { payment: p, contractId: c.id, currency: c.currency, accountId };
+	// Contract that lives only in Salesforce (linked through a sign-up link): it belongs to this account
+	// when its ServiceContract.AccountId is the account's linked Salesforce Account.
+	const [acct] = await sql<{ sfdc_account_id: string | null }[]>`SELECT sfdc_account_id FROM accounts WHERE id = ${accountId}`;
+	if (!acct?.sfdc_account_id || !isSfId(acct.sfdc_account_id)) return null;
+	const sc = await sfdcQuery<{ Id: string }>(
+		`SELECT Id FROM ServiceContract WHERE Id = '${p.Service_Contract__c}' AND AccountId = '${acct.sfdc_account_id}' LIMIT 1`
+	);
+	return sc.records[0] ? { payment: p, contractId: p.Service_Contract__c, currency: 'usd', accountId } : null;
 }
 
 const cents = (n: number) => Math.round(n * 100);

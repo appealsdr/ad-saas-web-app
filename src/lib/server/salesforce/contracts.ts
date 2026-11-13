@@ -31,6 +31,29 @@ import { createServiceCase } from './service-cases';
 import { createPayment } from './payments';
 
 // ── SF API names — tweak if your org uses different ones ──
+/** ContractLineItem.Deposit__c — deposit for the whole line (pricebook default, overridable in Salesforce). */
+const LINE_DEPOSIT_FIELD = 'Deposit__c';
+
+/** Deposit__c per ContractLineItem Id as currently stored in Salesforce (blank / unreadable → absent). */
+async function readLineDeposits(lineItemIds: string[]): Promise<Map<string, number>> {
+	const out = new Map<string, number>();
+	const ids = lineItemIds.filter((id) => /^[a-zA-Z0-9]{15,18}$/.test(id));
+	if (!ids.length) return out;
+	try {
+		const res = await sfdcQuery<Record<string, unknown> & { Id: string }>(
+			`SELECT Id, ${LINE_DEPOSIT_FIELD} FROM ContractLineItem WHERE Id IN (${ids.map((i) => `'${i}'`).join(',')})`,
+			{ paginate: true }
+		);
+		for (const r of res.records) {
+			const v = r[LINE_DEPOSIT_FIELD];
+			if (typeof v === 'number' && Number.isFinite(v) && v >= 0) out.set(r.Id, v);
+		}
+	} catch {
+		/* field not deployed / SF unreachable → keep the deposit computed from the pricebook */
+	}
+	return out;
+}
+
 const SERVICE_CONTRACT_FIELDS = {
 	contact: 'ContactId',            // standard lookup to Contact
 	store: 'Store__c'                // custom lookup
@@ -248,6 +271,12 @@ export async function populateContract(
 				UnitPrice: monthly ? Math.round(((li.unitPrice * li.quantity) / input.termMonths) * 100) / 100 : li.unitPrice
 			};
 			if (li.description) payload.Description = li.description;
+			// Deposit lines: record the deposit charged at checkout on the line itself (ContractLineItem.Deposit__c,
+			// whole-line amount, defaulting to the pricebook deposit). Salesforce reps can later override it
+			// during manual opportunity negotiation; the balance below is read back from this field.
+			if (!li.installment && (li.balanceDue ?? 0) > 0) {
+				payload[LINE_DEPOSIT_FIELD] = Math.round((li.unitPrice * li.quantity - (li.balanceDue ?? 0)) * 100) / 100;
+			}
 			try {
 				const res = await sobjectCreate('ContractLineItem', payload);
 				if (!res.success) {
@@ -384,10 +413,16 @@ export async function populateContract(
 	// 5. Deposit services: one balance payment per line for the part not charged yet — created Not Active,
 	//    moved to 'Request Payment' (in Salesforce) when the case completes or a payment is requested.
 	//    Linked to the contract, the ContractLineItem and that line's Case; collected when the case is completed.
+	// The balance honours ContractLineItem.Deposit__c (a rep may have negotiated a different deposit in
+	// Salesforce). Only deposit lines are affected, and with no override it equals the pricebook-based balance.
+	const sfDeposits = await readLineDeposits(lineItemIds.filter((id, i) => !!id && !input.lineItems[i].installment && (input.lineItems[i].balanceDue ?? 0) > 0));
 	await Promise.all(
 		input.lineItems.map(async (li, i) => {
 			const lineItemId = lineItemIds[i];
-			const balance = Math.round((li.balanceDue ?? 0) * 100) / 100;
+			const sfDeposit = lineItemId ? sfDeposits.get(lineItemId) : undefined;
+			const balance = sfDeposit != null
+				? Math.max(0, Math.round((li.unitPrice * li.quantity - sfDeposit) * 100) / 100)
+				: Math.round((li.balanceDue ?? 0) * 100) / 100;
 			if (!lineItemId || balance <= 0 || hasBalance(lineItemId, li)) return;
 			const res = await createPayment(
 				{

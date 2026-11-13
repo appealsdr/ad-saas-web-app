@@ -105,6 +105,43 @@
 		</div>
 	</div>
 
+	<!-- ─── Outstanding payments: contracts awaiting payment ────── -->
+	{#if data.outstanding.length > 0}
+		<div class="card" style="margin-bottom:20px">
+			<div class="card-title">
+				Outstanding Payments
+				<a href="/payments" class="hdr-link" style="margin-left:auto">All payments →</a>
+			</div>
+			{#each data.outstanding as c (c.id)}
+				<div class="out-contract">
+					<svelte:element this={c.payHref ? 'a' : 'div'} class="out-head" href={c.payHref ?? undefined}>
+						<div>
+							<div class="out-name">{c.name}</div>
+							<div class="out-sub">
+								{c.number ?? ''}{c.startDate ? ` · ${c.startDate}${c.endDate ? ' → ' + c.endDate : ''}` : ''}
+							</div>
+						</div>
+						<div class="out-total">
+							${c.totalDue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+							{#if c.payHref}<span class="out-pay">Pay →</span>{/if}
+						</div>
+					</svelte:element>
+					{#each c.payments as p (p.id)}
+						<div class="out-row">
+							<span>{p.description ?? p.name}{p.dueDate ? ` · due ${p.dueDate}` : ''}</span>
+							<span>${p.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+							{#if p.payable}
+								<a class="btn btn-primary btn-sm" href={`/payments/pay/${p.id}`}>Pay</a>
+							{:else}
+								<span class="badge badge-grey">{p.status === 'Failed' ? 'Failed' : 'Not ready yet'}</span>
+							{/if}
+						</div>
+					{/each}
+				</div>
+			{/each}
+		</div>
+	{/if}
+
 	<!-- ─── Action required: pending files + onboarding info, per store / case ────── -->
 	{#if data.actions.length > 0}
 		<div class="req-action-card">
@@ -244,6 +281,16 @@
 </div>
 
 <style>
+	.out-contract { border: 1px solid var(--grey-line); border-radius: 10px; margin-bottom: 10px; overflow: hidden; }
+	.out-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 12px 14px; background: #FFF7ED; color: inherit; text-decoration: none; }
+	a.out-head:hover { background: #FFEDD5; }
+	.out-name { font-weight: 700; color: var(--navy); }
+	.out-sub { font-size: 12px; color: var(--grey-text); }
+	.out-total { font-weight: 800; display: flex; gap: 10px; align-items: center; }
+	.out-pay { color: var(--orange); font-size: 13px; }
+	.out-row { display: flex; align-items: center; gap: 12px; padding: 8px 14px; font-size: 13px; border-top: 1px solid var(--grey-line); }
+	.out-row span:first-child { flex: 1; }
+
 	:global(:root) { --orange-dk: #c47a00; }
 
 	.content-area { flex: 1; overflow-y: auto; padding: 22px 26px; }
