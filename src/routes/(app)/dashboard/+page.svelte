@@ -130,11 +130,7 @@
 						<div class="out-row">
 							<span>{p.description ?? p.name}{p.dueDate ? ` · due ${p.dueDate}` : ''}</span>
 							<span>${p.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-							{#if p.payable}
-								<a class="btn btn-primary btn-sm" href={`/payments/pay/${p.id}`}>Pay</a>
-							{:else}
-								<span class="badge badge-grey">{p.status === 'Failed' ? 'Failed' : 'Not ready yet'}</span>
-							{/if}
+							<a class="btn btn-primary btn-sm" href={`/payments/pay/${p.id}`}>Pay</a>
 						</div>
 					{/each}
 				</div>
