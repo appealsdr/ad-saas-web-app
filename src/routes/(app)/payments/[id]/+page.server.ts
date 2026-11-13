@@ -2,6 +2,7 @@
  * One service contract: header info + every purchased line item.
  * Tenancy: the contract's account_id must match the signed-in user's.
  */
+import { getStripe } from '$lib/server/stripe';
 import { error, redirect } from '@sveltejs/kit';
 import type { PageServerLoad } from './$types';
 import { sql } from '$lib/server/db';
@@ -76,7 +77,17 @@ export const load: PageServerLoad = async ({ params, locals }) => {
 	const cases = casesResult && casesResult.ok ? casesResult.cases : [];
 	const casesError = casesResult && !casesResult.ok ? casesResult.error : null;
 
+	// Stripe payment details (amount charged incl. the pass-through processing fee) — best effort.
+	let stripeCharge: { totalCents: number; feeCents: number } | null = null;
+	if (/^pi_[A-Za-z0-9]+$/.test(contract.stripe_payment_intent_id)) {
+		try {
+			const pi = await getStripe().paymentIntents.retrieve(contract.stripe_payment_intent_id);
+			stripeCharge = { totalCents: pi.amount, feeCents: Number(pi.metadata?.fee_cents) || 0 };
+		} catch { /* Stripe unreachable — page still renders without it */ }
+	}
+
 	return {
+		stripeCharge,
 		localStoreId: contract.store_id,
 		cases,
 		casesError,

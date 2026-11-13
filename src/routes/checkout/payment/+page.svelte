@@ -91,7 +91,7 @@
 				← Back to summary
 			</a>
 			<h1>Payment</h1>
-			<p class="sub">Charging {formatPrice(data.total, data.currency)} now for {data.pricebookEntryIds.length}
+			<p class="sub">Charging {formatPrice(data.chargeTotal, data.currency)} now for {data.pricebookEntryIds.length}
 				service{data.pricebookEntryIds.length === 1 ? '' : 's'}.</p>
 		</header>
 
@@ -103,9 +103,15 @@
 					<strong>{formatPrice(item.dueNow, item.currency)}{#if item.dueNow < item.lineTotal} <small class="of">of {formatPrice(item.lineTotal, item.currency)}</small>{/if}</strong>
 				</li>
 			{/each}
+			{#if data.fee > 0}
+				<li class="fee-row">
+					<span>Card processing fee <small class="of">(charged by Stripe)</small></span>
+					<strong>{formatPrice(data.fee, data.currency)}</strong>
+				</li>
+			{/if}
 			<li class="total-row">
 				<span>Charged now</span>
-				<strong>{formatPrice(data.total, data.currency)}</strong>
+				<strong>{formatPrice(data.chargeTotal, data.currency)}</strong>
 			</li>
 		</ul>
 		{#if data.balanceTotal > 0}
@@ -127,7 +133,7 @@
 					{/if}
 					<button class="btn btn-primary btn-full" type="submit"
 						style="margin-top:18px" disabled={submitting || !elements}>
-						{submitting ? 'Processing…' : `Pay ${formatPrice(data.total, data.currency)}`}
+						{submitting ? 'Processing…' : `Pay ${formatPrice(data.chargeTotal, data.currency)}`}
 					</button>
 				</form>
 			</Elements>
@@ -165,6 +171,7 @@
 	.recap li:last-child { border-bottom: none; }
 	.of { font-weight: 500; color: var(--grey-text); font-size: 11px; }
 	.split-note { font-size: 13px; background: var(--orange-lt); border: 1px solid var(--orange); border-radius: var(--radius); padding: 10px 14px; margin: 12px 0; color: var(--navy); line-height: 1.5; }
+	.recap li.fee-row { font-size: 13px; color: var(--grey-text); }
 	.recap li.total-row { font-size: 14px; font-weight: 700; color: var(--navy); }
 	.recap li strong { font-variant-numeric: tabular-nums; }
 

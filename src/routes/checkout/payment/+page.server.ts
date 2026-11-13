@@ -9,6 +9,7 @@
  */
 import { redirect, error } from '@sveltejs/kit';
 import type { PageServerLoad } from './$types';
+import { stripeFee } from '$lib/server/payments/fees';
 import { getCatalogProduct, parseRecurringOptions, dueNow, balanceLater } from '$lib/server/salesforce';
 
 export const load: PageServerLoad = async ({ url, locals }) => {
@@ -36,6 +37,8 @@ export const load: PageServerLoad = async ({ url, locals }) => {
 	const orderTotal = items.reduce((s, p) => s + p.unitPrice, 0);
 	// What is charged now (deposit products at their deposit); the rest is billed on case completion.
 	const total = Math.round(items.reduce((s, p) => s + dueNow(p), 0) * 100) / 100;
+	const fee = stripeFee(total);
+	const chargeTotal = Math.round((total + fee) * 100) / 100;
 	const balanceTotal = Math.round(items.reduce((s, p) => s + balanceLater(p), 0) * 100) / 100;
 
 	// Grouped for the recap list only — `items`/`pricebookEntryIds` below stay
@@ -59,6 +62,8 @@ export const load: PageServerLoad = async ({ url, locals }) => {
 	return {
 		items: groupedItems,
 		total,
+		fee,
+		chargeTotal,
 		orderTotal,
 		balanceTotal,
 		currency,
