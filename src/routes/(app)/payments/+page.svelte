@@ -48,8 +48,8 @@
 		conId = q;
 	}
 	function onContract(id: string | null) {
-		if (!browser || id === lastSynced) return;
 		const canon = urlId(id);
+		if (!browser || canon === lastSynced) return;
 		lastSynced = canon;
 		const u = new URL(window.location.href);
 		if (canon) u.searchParams.set('contract', canon); else u.searchParams.delete('contract');
