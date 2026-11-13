@@ -137,6 +137,12 @@ export const load: PageServerLoad = async ({ locals }) => {
 		`
 	]);
 
+	// Contracts that exist only in Salesforce (linked via a sign-up link): shown in the same UI, keyed by their SF id.
+	const [acctRow] = await sql<{ sfdc_account_id: string | null }[]>`SELECT sfdc_account_id FROM accounts WHERE id = ${user.account_id}`;
+	const sfOnly = await loadSalesforceOnlyContracts(acctRow?.sfdc_account_id ?? null, new Set(rows.map((r) => r.sfdc_service_contract_id).filter((x): x is string => !!x)));
+	rows.push(...sfOnly.rows);
+	lines.push(...sfOnly.lines);
+
 	const linesBy = new Map<string, LineRow[]>();
 	for (const l of lines) linesBy.set(l.service_contract_id, [...(linesBy.get(l.service_contract_id) ?? []), l]);
 
@@ -189,7 +195,7 @@ export const load: PageServerLoad = async ({ locals }) => {
 	// Fallback: contracts without any Salesforce payment get their Stripe charge.
 	const covered = new Set(payments.map((p) => p.contractId));
 	for (const c of rows) {
-		if (covered.has(c.id)) continue;
+		if (covered.has(c.id) || !c.stripe_payment_intent_id) continue; // Salesforce-only contracts have no Stripe charge to fall back on
 		payments.push({
 			id: `PAY-${c.id.slice(0, 8).toUpperCase()}`,
 			sfId: null,
@@ -255,4 +261,40 @@ function shapeContract(r: ContractRow, lines: LineRow[], sfName: string | null) 
 			unit: Number(l.unit_price)
 		}))
 	};
+}
+
+/** ServiceContracts of the linked Salesforce Account that have no local mirror row, shaped like local ones. */
+async function loadSalesforceOnlyContracts(sfdcAccountId: string | null, known: Set<string>): Promise<{ rows: ContractRow[]; lines: LineRow[] }> {
+	const none = { rows: [] as ContractRow[], lines: [] as LineRow[] };
+	if (!sfdcAccountId || !/^[a-zA-Z0-9]{15,18}$/.test(sfdcAccountId)) return none;
+	try {
+		type C = { Id: string; StartDate: string | null; EndDate: string | null; CreatedDate: string; Store__r?: { Name: string } | null };
+		let cs: C[];
+		try {
+			cs = (await sfdcQuery<C>(`SELECT Id, StartDate, EndDate, CreatedDate, Store__r.Name FROM ServiceContract WHERE AccountId = '${sfdcAccountId}' ORDER BY CreatedDate DESC LIMIT 200`, { paginate: true })).records;
+		} catch {
+			cs = (await sfdcQuery<C>(`SELECT Id, StartDate, EndDate, CreatedDate FROM ServiceContract WHERE AccountId = '${sfdcAccountId}' ORDER BY CreatedDate DESC LIMIT 200`, { paginate: true })).records;
+		}
+		cs = cs.filter((c) => !known.has(c.Id));
+		if (!cs.length) return none;
+		const inList = cs.map((c) => `'${c.Id}'`).join(',');
+		type L = { ServiceContractId: string; Quantity: number | null; UnitPrice: number | null; Description: string | null; PricebookEntry?: { Product2?: { Name: string } | null } | null };
+		const ls = (await sfdcQuery<L>(`SELECT ServiceContractId, Quantity, UnitPrice, Description, PricebookEntry.Product2.Name FROM ContractLineItem WHERE ServiceContractId IN (${inList}) ORDER BY CreatedDate ASC`, { paginate: true })).records;
+		const rows: ContractRow[] = cs.map((c) => {
+			const start = new Date((c.StartDate ?? c.CreatedDate.slice(0, 10)) + 'T00:00:00Z');
+			const end = new Date((c.EndDate ?? c.StartDate ?? c.CreatedDate.slice(0, 10)) + 'T00:00:00Z');
+			return {
+				id: c.Id, stripe_payment_intent_id: '', amount_cents: 0n, currency: 'usd', paid_at: new Date(c.CreatedDate),
+				start_date: start, end_date: end, term_months: Math.max(1, Math.round((end.getTime() - start.getTime()) / (30.44 * 864e5))),
+				kind: 'service', sfdc_service_contract_id: c.Id, sync_status: 'synced', store_id: null, store_name: c.Store__r?.Name ?? null
+			};
+		});
+		const lines: LineRow[] = ls.map((l) => ({
+			service_contract_id: l.ServiceContractId, product_name: l.PricebookEntry?.Product2?.Name ?? 'Service', product_description: l.Description,
+			product_category: null, unit_price: String(l.UnitPrice ?? 0), quantity: Number(l.Quantity ?? 1)
+		}));
+		return { rows, lines };
+	} catch {
+		return none; // best-effort: never break the Payments page
+	}
 }

@@ -49,9 +49,10 @@
 	}
 	function onContract(id: string | null) {
 		if (!browser || id === lastSynced) return;
-		lastSynced = id;
+		const canon = urlId(id);
+		lastSynced = canon;
 		const u = new URL(window.location.href);
-		if (id) u.searchParams.set('contract', id); else u.searchParams.delete('contract');
+		if (canon) u.searchParams.set('contract', canon); else u.searchParams.delete('contract');
 		goto(u, { keepFocus: true, noScroll: true });
 	}
 	$: onUrl($page.url.searchParams.get('contract'));
@@ -60,7 +61,9 @@
 	const q = $page.url.searchParams;
 	const flash = q.get('paid') ? `Payment received — thank you. ${q.get('paid') !== '1' ? q.get('paid') + ' is now paid.' : ''}` : q.get('payment') === 'failed' ? 'The payment did not go through. You have not been charged — please try again.' : q.get('payment') === 'processing' ? 'Your payment is still processing. It will show as Paid shortly.' : null;
 
-	$: conById = new Map(data.contracts.map((c) => [c.id, c]));
+	$: conById = new Map(data.contracts.flatMap((c) => (c.sfdcServiceContractId ? [[c.id, c], [c.sfdcServiceContractId, c]] : [[c.id, c]]) as [string, (typeof data.contracts)[number]][]));
+	// One canonical URL id per contract: its Salesforce id when it has one (same link from the dashboard).
+	const urlId = (id: string | null) => (id ? conById.get(id)?.sfdcServiceContractId ?? id : id);
 	// Line payments are components of the contract's First Payment, so only
 	// top-level payments are invoices and count toward totals.
 	$: topPays = data.payments.filter((p) => !p.isLine);
@@ -282,7 +285,7 @@
 				<div class="fields">
 					<div><span>Store</span><strong>{cd.storeName ?? '—'}</strong></div>
 					<div><span>Term</span><strong>{fmtDate(cd.startDate)} → {fmtDate(cd.endDate)} · {cd.termMonths} months</strong></div>
-					<div><span>Stripe payment</span><button type="button" class="copy" title="Click to copy" on:click={() => copy(cd.stripePaymentIntentId)}>{cd.stripePaymentIntentId}</button></div>
+					{#if cd.stripePaymentIntentId}<div><span>Stripe payment</span><button type="button" class="copy" title="Click to copy" on:click={() => copy(cd.stripePaymentIntentId)}>{cd.stripePaymentIntentId}</button></div>{/if}
 					<div><span>Salesforce contract</span>
 						{#if cd.sfdcServiceContractId}<button type="button" class="copy" title="Click to copy" on:click={() => copy(cd.sfdcServiceContractId ?? '')}>{cd.sfdcServiceContractId}</button>{:else}<strong>—</strong>{/if}</div>
 					<div><span>Sync status</span><strong>{cd.syncStatus === 'synced' ? 'In Salesforce' : cd.syncStatus === 'failed' ? 'Sync failed' : 'Pending'}</strong></div>
