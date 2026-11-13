@@ -76,7 +76,7 @@ export async function listOutstandingContracts(sfdcAccountId: string | null): Pr
 			endDate: c.EndDate,
 			totalDue: payments.reduce((n, p) => n + p.amount, 0),
 			payments,
-			payHref: `/payments/contract/${c.Id}`,
+			payHref: `/payments?contract=${c.Id}`,
 			firstPayableId: firstPayable?.id ?? null
 		});
 	}

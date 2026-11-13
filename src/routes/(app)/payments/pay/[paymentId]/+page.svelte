@@ -55,7 +55,7 @@
 		<a class="back" href="/payments">← Back to Payments</a>
 		<h1>{money(data.amount, data.currency)}</h1>
 		<p class="desc">{data.description}</p>
-		<p class="desc"><a href={`/payments/contract/${data.contractId}`}>View full contract details →</a></p>
+		<p class="desc"><a href={`/payments?contract=${data.contractId}`}>View full contract details →</a></p>
 
 		{#if data.paid}
 			<div class="alert alert-info">This payment has already been paid. Thank you.</div>
