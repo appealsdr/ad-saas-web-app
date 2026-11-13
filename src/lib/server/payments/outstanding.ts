@@ -26,8 +26,9 @@ export interface OutstandingContract {
 	endDate: string | null;
 	totalDue: number;
 	payments: OutstandingPayment[];
-	/** First payable payment — where clicking the contract takes the client. */
-	payHref: string | null;
+	/** Contract overview page (what is being paid). */
+	payHref: string;
+	firstPayableId: string | null;
 }
 
 // Only ACTIVE payments (collectible now). Pending / Not Active / Failed ones are not shown on the dashboard.
@@ -75,7 +76,8 @@ export async function listOutstandingContracts(sfdcAccountId: string | null): Pr
 			endDate: c.EndDate,
 			totalDue: payments.reduce((n, p) => n + p.amount, 0),
 			payments,
-			payHref: firstPayable ? `/payments/pay/${firstPayable.id}` : null
+			payHref: `/payments/contract/${c.Id}`,
+			firstPayableId: firstPayable?.id ?? null
 		});
 	}
 	return out;
