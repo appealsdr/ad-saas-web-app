@@ -53,8 +53,11 @@
 <div class="content-area">
 	<div class="card">
 		<a class="back" href="/payments">← Back to Payments</a>
-		<h1>{money(data.amount, data.currency)}</h1>
+		<h1>{money(data.amount + data.fee, data.currency)}</h1>
 		<p class="desc">{data.description}</p>
+		{#if data.fee > 0 && !data.paid}
+			<p class="desc">{money(data.amount, data.currency)} balance + {money(data.fee, data.currency)} card processing fee (charged by Stripe)</p>
+		{/if}
 		<p class="desc"><a href={`/payments?contract=${data.contractId}`}>View full contract details →</a></p>
 
 		{#if data.paid}
@@ -69,7 +72,7 @@
 					<PaymentElement />
 					{#if formError}<div class="alert alert-error" style="margin-top:14px">{formError}</div>{/if}
 					<button class="btn btn-primary btn-full" type="submit" style="margin-top:18px" disabled={submitting || !elements}>
-						{submitting ? 'Processing…' : `Pay ${money(data.amount, data.currency)}`}
+						{submitting ? 'Processing…' : `Pay ${money(data.amount + data.fee, data.currency)}`}
 					</button>
 				</form>
 			</Elements>

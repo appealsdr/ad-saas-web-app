@@ -2,6 +2,7 @@ import { error, redirect } from '@sveltejs/kit';
 import type { PageServerLoad } from './$types';
 import { logError, describeError } from '$lib/server/error_log';
 import { sql } from '$lib/server/db';
+import { stripeFee } from '$lib/server/payments/fees';
 import { getOwnedPayment, STATUS_REQUEST } from '$lib/server/payments/balance';
 
 export const load: PageServerLoad = async ({ params, locals }) => {
@@ -24,6 +25,7 @@ export const load: PageServerLoad = async ({ params, locals }) => {
 		name: p.Name,
 		description: p.Description__c ?? 'Service balance',
 		amount: p.Amount__c ?? 0,
+		fee: stripeFee(p.Amount__c ?? 0),
 		currency: owned.currency.toUpperCase(),
 		status: p.Status__c ?? 'Pending',
 		// Informational only — /api/payments/:id/intent re-checks Salesforce before any charge.

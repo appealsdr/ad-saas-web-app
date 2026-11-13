@@ -119,6 +119,16 @@
 					<div class="field-label">Payment Method Id</div>
 					<div class="field-value mono">{data.contract.stripePaymentMethodId ?? '—'}</div>
 				</div>
+				{#if data.stripeCharge}
+					<div class="field-block">
+						<div class="field-label">Amount Charged</div>
+						<div class="field-value">{fmtMoneyCents(data.stripeCharge.totalCents, data.contract.currency)}</div>
+					</div>
+					<div class="field-block">
+						<div class="field-label">Card Processing Fee</div>
+						<div class="field-value">{data.stripeCharge.feeCents > 0 ? fmtMoneyCents(data.stripeCharge.feeCents, data.contract.currency) : 'None'}</div>
+					</div>
+				{/if}
 				<div class="field-block full">
 					<div class="field-label">Receipt Email</div>
 					<div class="field-value">{data.contract.stripeReceiptEmail ?? '—'}</div>

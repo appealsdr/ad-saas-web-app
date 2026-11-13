@@ -164,7 +164,8 @@ async function persistContract(
 		sfLines = buildRecurringLines([...groups.values()], termMonths, startDate, snapshot.recurringPayOption ?? 'full');
 	}
 
-	const amountCents = pi.amount;
+	const feeCents = Number(pi.metadata?.fee_cents) || 0;
+	const amountCents = pi.amount - feeCents; // contract value excludes the pass-through Stripe fee
 	const currency = (pi.currency || 'usd').toUpperCase();
 	const chargeId = typeof pi.latest_charge === 'string' ? pi.latest_charge : (pi.latest_charge?.id ?? null);
 	const paymentMethodId = typeof pi.payment_method === 'string' ? pi.payment_method : null;

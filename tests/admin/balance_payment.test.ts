@@ -39,7 +39,7 @@ const rec = (over: Record<string, unknown> = {}) => ({
 });
 const pi = (over: Record<string, unknown> = {}) => ({
 	id: 'pi_' + uniq(), status: 'succeeded', amount: 30000, created: 1790000000, payment_method: 'pm_1',
-	metadata: { kind: 'balance', payment_id: PID, payment_name: 'PN-0075', account_id: 'acct' }, ...over
+	metadata: { kind: 'balance', base_cents: '30000', fee_cents: '927', payment_id: PID, payment_name: 'PN-0075', account_id: 'acct' }, ...over
 }) as never;
 
 describe('who can pay', () => {
@@ -58,12 +58,12 @@ describe('Stripe payment uses the existing record', () => {
 
 	it("charges that record's amount and description and passes a stable reference", async () => {
 		const r = await createBalanceIntent(owned(), { id: 'u1', email: 'a@b.test' }, 'cus_1');
-		expect(r).toMatchObject({ clientSecret: 'secret_1', amountCents: 30000 });
+		expect(r).toMatchObject({ clientSecret: 'secret_1', amountCents: 30000, feeCents: 927, chargeCents: 30927 }); // (30000+30)/(1-2.9%)
 		const [params, opts] = m.stripeCreate.mock.calls[0];
-		expect(params).toMatchObject({ amount: 30000, currency: 'usd', customer: 'cus_1' });
+		expect(params).toMatchObject({ amount: 30927, currency: 'usd', customer: 'cus_1' });
 		expect(params.description).toContain('Remaining balance for A-Z Claims');
-		expect(params.metadata).toMatchObject({ kind: 'balance', payment_id: PID, contract_id: 'cid-1', line_item_id: '811LINE000000001' });
-		expect(opts.idempotencyKey).toBe(`balance-${PID}-30000`); // a reload returns the same PaymentIntent — no double charge
+		expect(params.metadata).toMatchObject({ kind: 'balance', base_cents: '30000', fee_cents: '927', payment_id: PID, contract_id: 'cid-1', line_item_id: '811LINE000000001' });
+		expect(opts.idempotencyKey).toBe(`balance-${PID}-30927`); // a reload returns the same PaymentIntent — no double charge
 	});
 	it('refuses to start a payment unless Salesforce says Request Payment', async () => {
 		await expect(createBalanceIntent(owned({ Status__c: 'Not Active' }), { id: 'u1', email: 'a@b.test' })).rejects.toThrow(/not ready/);
