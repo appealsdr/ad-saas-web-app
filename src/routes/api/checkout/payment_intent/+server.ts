@@ -24,7 +24,7 @@ import { getOrCreateStripeCustomer } from '$lib/server/stripe_customer';
 import { getCatalogProduct, parseRecurringOptions, dueNow, balanceLater, type CatalogProduct } from '$lib/server/salesforce';
 import { logError, describeError } from '$lib/server/error_log';
 import { sql } from '$lib/server/db';
-import { stripeFeeCents } from '$lib/server/payments/fees';
+import { feeForMethod } from '$lib/server/payments/fees';
 
 interface Body {
 	pricebookEntryIds?: string[];
@@ -93,9 +93,9 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 		throw error(400, 'Order total is below the minimum charge amount.');
 	}
 
-	// Stripe's processing fee is passed on to the client (grossed up so we net the base price).
-	const feeCents = stripeFeeCents(totalCents);
-	const chargeCents = totalCents + feeCents;
+	// Stripe processing fee is passed to the client; starts at the card rate and is re-priced when the client
+	// picks another payment method (POST /api/checkout/fee).
+	const fee = feeForMethod(totalCents, 'card');
 
 	// Build a human-readable note that will appear in the Stripe dashboard
 	// (PaymentIntent description) so support staff can quickly identify the
@@ -134,19 +134,18 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 
 	try {
 		const intent = await getStripe().paymentIntents.create({
-			amount: chargeCents,
+			amount: fee.totalCents,
 			currency,
 			automatic_payment_methods: { enabled: true },
 			receipt_email: user.email,
 			description: note,
 			...(stripeCustomerId ? { customer: stripeCustomerId } : {}),
 			metadata: {
+				base_cents: String(totalCents), fee_cents: String(fee.feeCents), fee_method: fee.method,
 				user_id: user.id,
 				account_id: user.sfdcAccountId ?? '',
 				store_id: validatedStoreId ?? '',
 				pricebook_entry_ids: products.map((p) => p.pricebookEntryId).join(','),
-				base_cents: String(totalCents),
-				fee_cents: String(feeCents),
 				balance_cents: String(products.reduce((s, p) => s + Math.round(balanceLater(p) * 100), 0)),
 				product_ids: products.map((p) => p.productId).join(','),
 				kind,
@@ -156,9 +155,9 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 
 		return json({
 			clientSecret: intent.client_secret,
-			amount: chargeCents,
-			baseCents: totalCents,
-			feeCents,
+			intentId: intent.id,
+			amount: fee.totalCents,
+			fee,
 			currency,
 			itemCount: products.length,
 			missing

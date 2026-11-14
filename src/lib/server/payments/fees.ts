@@ -10,6 +10,7 @@
  * Pure + env-driven so server load functions and PaymentIntent creation always agree.
  */
 import { env } from '$env/dynamic/private';
+import { computeFee, type FeeBreakdown } from '$lib/payments/fees';
 
 function num(v: string | undefined, fallback: number): number {
 	const n = v === undefined || v === '' ? NaN : Number(v);
@@ -22,6 +23,16 @@ export function stripeFeeCents(baseCents: number): number {
 	const fixed = num(env.STRIPE_FEE_FIXED_CENTS, 30);
 	if (baseCents <= 0 || (pct === 0 && fixed === 0) || pct >= 1) return 0;
 	return Math.round((baseCents + fixed) / (1 - pct)) - baseCents;
+}
+
+/**
+ * Fee for the payment method the client selected. Card/Link use the env-configured rate above (so
+ * STRIPE_FEE_PERCENT=0 still switches the surcharge off); other methods use the per-method table.
+ */
+export function feeForMethod(baseCents: number, method: string | null | undefined): FeeBreakdown {
+	const pct = num(env.STRIPE_FEE_PERCENT, 2.9) / 100;
+	const fixedCents = num(env.STRIPE_FEE_FIXED_CENTS, 30);
+	return computeFee(baseCents, method, { pct, fixedCents });
 }
 
 /** Fee in currency units (dollars), rounded to cents. */

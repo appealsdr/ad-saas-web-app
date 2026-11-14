@@ -10,13 +10,14 @@
  * Salesforce, so showing a row never makes it payable. No new Payment__c is ever created for a
  * balance — the same record is updated to Paid with the Stripe details.
  */
-import { stripeFeeCents } from './fees';
+import { feeForMethod } from './fees';
 import type Stripe from 'stripe';
 import { sql } from '../db';
 import { sfdcQuery } from '../salesforce/client';
 import { sobjectUpdate } from '../salesforce/client';
 import { getStripe } from '../stripe';
 import { logError } from '../error_log';
+import { normalizeMethod, type FeeBreakdown } from '../../payments/fees';
 
 export const STATUS_REQUEST = 'Request Payment';
 export const STATUS_INACTIVE = 'Not Active';
@@ -73,12 +74,13 @@ export async function createBalanceIntent(
 	owned: OwnedPayment,
 	user: { id: string; email: string; displayName?: string | null },
 	stripeCustomerId?: string
-): Promise<{ clientSecret: string; amountCents: number; feeCents: number; chargeCents: number; currency: string; intentId: string }> {
+): Promise<{ clientSecret: string; amountCents: number; currency: string; intentId: string; feeCents: number; chargeCents: number; fee: FeeBreakdown }> {
 	const p = owned.payment;
 	assertCollectible(p);
-	const amountCents = cents(p.Amount__c!);
-	const feeCents = stripeFeeCents(amountCents);
-	const chargeCents = amountCents + feeCents;
+	const baseCents = cents(p.Amount__c!);
+	const fee = feeForMethod(baseCents, 'card'); // re-priced when the client picks another payment method
+	const amountCents = baseCents; // the price
+	const chargeCents = fee.totalCents; // price + Stripe fee
 	const description = [p.Description__c?.trim() || 'Service balance', `Payment ${p.Name}`].join(' — ');
 	const intent = await getStripe().paymentIntents.create(
 		{
@@ -89,14 +91,15 @@ export async function createBalanceIntent(
 			description,
 			...(stripeCustomerId ? { customer: stripeCustomerId } : {}),
 			metadata: {
-				kind: 'balance', base_cents: String(amountCents), fee_cents: String(feeCents), payment_id: p.Id, payment_name: p.Name, contract_id: owned.contractId,
+				base_cents: String(baseCents), fee_cents: String(fee.feeCents), fee_method: fee.method,
+				kind: 'balance', payment_id: p.Id, payment_name: p.Name, contract_id: owned.contractId,
 				line_item_id: p.Contract_Line_Item__c ?? '', user_id: user.id, account_id: owned.accountId
 			}
 		},
 		{ idempotencyKey: `balance-${p.Id}-${chargeCents}` }
 	);
 	if (!intent.client_secret) throw new BalanceError('Could not start the payment.', 502);
-	return { clientSecret: intent.client_secret, amountCents, feeCents, chargeCents, currency: owned.currency, intentId: intent.id };
+	return { clientSecret: intent.client_secret, amountCents, currency: owned.currency, intentId: intent.id, feeCents: fee.feeCents, chargeCents, fee };
 }
 
 /**
@@ -123,7 +126,8 @@ export async function applyBalancePaid(pi: Stripe.PaymentIntent): Promise<'appli
 		if (!rec) throw new Error('Payment__c not found.');
 		if (rec.Status__c === 'Paid') return 'already'; // paid by something else — never re-apply
 		const piFee = Number(pi.metadata?.fee_cents) || 0;
-		if (cents(rec.Amount__c ?? 0) !== pi.amount - piFee) {
+		const baseCents = Number(pi.metadata.base_cents ?? pi.amount - piFee);
+		if (cents(rec.Amount__c ?? 0) !== baseCents) {
 			await logError({ source: 'payments.balance', operation: 'amount_mismatch', accountId: pi.metadata.account_id, errorMessage: `Stripe charged ${pi.amount} cents but ${rec.Name} is ${rec.Amount__c}.`, context: { paymentIntentId: pi.id, paymentId } });
 			await sql`DELETE FROM balance_payment_applications WHERE stripe_payment_intent_id = ${pi.id}`;
 			return 'mismatch';
@@ -183,4 +187,28 @@ export async function stripeDocuments(paymentIntentId: string | null | undefined
 	} catch {
 		return none;
 	}
+}
+
+
+/**
+ * Re-price an unconfirmed PaymentIntent for the payment method the client just selected. The base amount comes
+ * from the intent's own metadata (set server-side), never from the browser; only the method TYPE is client input
+ * and it is whitelisted by normalizeMethod.
+ */
+export async function repriceIntentForMethod(intentId: string, accountId: string | null, methodType: string | null | undefined, userId?: string): Promise<FeeBreakdown> {
+	const stripe = getStripe();
+	const pi = await stripe.paymentIntents.retrieve(intentId);
+	const owns = accountId !== null ? pi.metadata?.account_id === accountId : !!userId && pi.metadata?.user_id === userId;
+	if (!owns) throw new BalanceError('Payment not found.', 404);
+	if (pi.status !== 'requires_payment_method' && pi.status !== 'requires_confirmation') throw new BalanceError('This payment can no longer be changed.', 409);
+	const baseCents = Number(pi.metadata.base_cents);
+	if (!Number.isInteger(baseCents) || baseCents < 50) throw new BalanceError('Payment not found.', 404);
+	const fee = feeForMethod(baseCents, normalizeMethod(methodType));
+	if (fee.totalCents !== pi.amount) {
+		await stripe.paymentIntents.update(intentId, {
+			amount: fee.totalCents,
+			metadata: { fee_cents: String(fee.feeCents), fee_method: fee.method }
+		});
+	}
+	return fee;
 }

@@ -7,6 +7,7 @@
 	// instead of a build-time import failure that 500s the page.
 	import { env } from '$env/dynamic/public';
 	import type { PageData } from './$types';
+	import type { FeeBreakdown } from '$lib/payments/fees';
 
 	const PUBLIC_STRIPE_KEY = env.PUBLIC_STRIPE_KEY ?? '';
 
@@ -21,6 +22,33 @@
 	// `bind:elements` on the <Elements> component. The PaymentElement child
 	// renders the form; we hand `elements` to stripe.confirmPayment().
 	let elements: StripeElements | undefined;
+	let intentId = '';
+	// Starts at the server-computed card fee; replaced by the server's figure when the client picks another method.
+	let fee: FeeBreakdown = { method: 'card', label: 'Card processing fee (charged by Stripe)', baseCents: Math.round(data.total * 100), feeCents: Math.round(data.fee * 100), totalCents: Math.round(data.chargeTotal * 100) };
+	let feeUpdating = false;
+	let lastMethod = '';
+
+	// The client changed payment method -> ask the server to re-price the PaymentIntent with that method's fee.
+	async function onMethodChange(e: { value?: { type?: string } }) {
+		const type = e.value?.type;
+		// The first event (default method) also syncs us with the server's figure, e.g. after a reload.
+		if (!type || type === lastMethod || !intentId) return;
+		lastMethod = type;
+		feeUpdating = true;
+		try {
+			const res = await fetch('/api/checkout/fee', {
+				method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ intentId, method: type })
+			});
+			if (!res.ok) throw new Error();
+			fee = ((await res.json()) as { fee: FeeBreakdown }).fee;
+			await elements?.fetchUpdates();
+			formError = null;
+		} catch {
+			formError = 'Could not update the processing fee. Please re-select your payment method.';
+		} finally {
+			feeUpdating = false;
+		}
+	}
 
 	onMount(async () => {
 		try {
@@ -47,7 +75,9 @@
 				const text = await res.text();
 				throw new Error(text || `Could not initialize payment (${res.status}).`);
 			}
-			const body = (await res.json()) as { clientSecret: string };
+			const body = (await res.json()) as { clientSecret: string; intentId: string; fee: FeeBreakdown };
+			intentId = body.intentId;
+			fee = body.fee;
 			clientSecret = body.clientSecret;
 		} catch (e) {
 			initError = e instanceof Error ? e.message : 'Could not initialize payment.';
@@ -91,7 +121,7 @@
 				← Back to summary
 			</a>
 			<h1>Payment</h1>
-			<p class="sub">Charging {formatPrice(data.chargeTotal, data.currency)} now for {data.pricebookEntryIds.length}
+			<p class="sub">Charging {formatPrice(fee.totalCents / 100, data.currency)} now for {data.pricebookEntryIds.length}
 				service{data.pricebookEntryIds.length === 1 ? '' : 's'}.</p>
 		</header>
 
@@ -103,15 +133,15 @@
 					<strong>{formatPrice(item.dueNow, item.currency)}{#if item.dueNow < item.lineTotal} <small class="of">of {formatPrice(item.lineTotal, item.currency)}</small>{/if}</strong>
 				</li>
 			{/each}
-			{#if data.fee > 0}
+			{#if fee.feeCents > 0}
 				<li class="fee-row">
-					<span>Card processing fee <small class="of">(charged by Stripe)</small></span>
-					<strong>{formatPrice(data.fee, data.currency)}</strong>
+					<span>{fee.label}</span>
+					<strong>{formatPrice(fee.feeCents / 100, data.currency)}</strong>
 				</li>
 			{/if}
 			<li class="total-row">
 				<span>Charged now</span>
-				<strong>{formatPrice(data.chargeTotal, data.currency)}</strong>
+				<strong>{formatPrice(fee.totalCents / 100, data.currency)}</strong>
 			</li>
 		</ul>
 		{#if data.balanceTotal > 0}
@@ -127,13 +157,14 @@
 		{:else if clientSecret && stripe}
 			<Elements {stripe} {clientSecret} bind:elements>
 				<form on:submit|preventDefault={handleSubmit}>
-					<PaymentElement />
+					<p class="fee-hint">The processing fee above updates to match the payment method you choose.</p>
+					<PaymentElement onchange={onMethodChange} />
 					{#if formError}
 						<div class="alert alert-error" style="margin-top:14px">{formError}</div>
 					{/if}
 					<button class="btn btn-primary btn-full" type="submit"
-						style="margin-top:18px" disabled={submitting || !elements}>
-						{submitting ? 'Processing…' : `Pay ${formatPrice(data.chargeTotal, data.currency)}`}
+						style="margin-top:18px" disabled={submitting || feeUpdating || !elements}>
+						{submitting ? 'Processing…' : `Pay ${formatPrice(fee.totalCents / 100, data.currency)}`}
 					</button>
 				</form>
 			</Elements>
@@ -171,6 +202,7 @@
 	.recap li:last-child { border-bottom: none; }
 	.of { font-weight: 500; color: var(--grey-text); font-size: 11px; }
 	.split-note { font-size: 13px; background: var(--orange-lt); border: 1px solid var(--orange); border-radius: var(--radius); padding: 10px 14px; margin: 12px 0; color: var(--navy); line-height: 1.5; }
+	.fee-hint { font-size: 12px; color: var(--grey-text); margin: 0 0 12px; }
 	.recap li.fee-row { font-size: 13px; color: var(--grey-text); }
 	.recap li.total-row { font-size: 14px; font-weight: 700; color: var(--navy); }
 	.recap li strong { font-variant-numeric: tabular-nums; }
