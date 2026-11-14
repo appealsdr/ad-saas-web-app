@@ -23,7 +23,7 @@ export const POST: RequestHandler = async ({ params, locals }) => {
 		const c = await getOrCreateStripeCustomer(u.account_id, { email: locals.user.email, name: locals.user.displayName }, { userId: locals.user.id });
 		if (c.ok) customerId = c.customerId;
 		const r = await createBalanceIntent(owned, { id: locals.user.id, email: locals.user.email, displayName: locals.user.displayName }, customerId);
-		return json({ clientSecret: r.clientSecret, amount: r.amountCents, currency: r.currency });
+		return json({ clientSecret: r.clientSecret, intentId: r.intentId, amount: r.amountCents, currency: r.currency, fee: r.fee });
 	} catch (e) {
 		if (e instanceof BalanceError) throw error(e.status, e.message);
 		if (e && typeof e === 'object' && 'status' in e) throw e; // an HttpError from above

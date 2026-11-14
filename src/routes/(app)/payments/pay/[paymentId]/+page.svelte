@@ -4,6 +4,8 @@
 	import { Elements, PaymentElement } from 'svelte-stripe';
 	import { env } from '$env/dynamic/public';
 	import Topbar from '$components/layout/Topbar.svelte';
+	import FeeBreakdownView from '$lib/components/payments/FeeBreakdown.svelte';
+	import { computeFee, type FeeBreakdown } from '$lib/payments/fees';
 	import type { PageData } from './$types';
 
 	export let data: PageData;
@@ -15,6 +17,31 @@
 	let formError: string | null = null;
 	let submitting = false;
 	let elements: StripeElements | undefined;
+	let intentId = '';
+	let fee: FeeBreakdown = computeFee(Math.round(data.amount * 100), 'card');
+	let feeUpdating = false;
+	let lastMethod = 'card';
+
+	// The client changed payment method -> ask the server to re-price the PaymentIntent with that method's fee.
+	async function onMethodChange(e: CustomEvent) {
+		const type = e.detail?.value?.type as string | undefined;
+		if (!type || type === lastMethod || !intentId) return;
+		lastMethod = type;
+		feeUpdating = true;
+		try {
+			const res = await fetch(`/api/payments/${encodeURIComponent(data.paymentId)}/fee`, {
+				method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ intentId, method: type })
+			});
+			if (!res.ok) throw new Error();
+			fee = ((await res.json()) as { fee: FeeBreakdown }).fee;
+			await elements?.fetchUpdates();
+			formError = null;
+		} catch {
+			formError = 'Could not update the processing fee. Please re-select your payment method.';
+		} finally {
+			feeUpdating = false;
+		}
+	}
 
 	const money = (n: number, c: string) => {
 		try { return new Intl.NumberFormat('en-US', { style: 'currency', currency: c }).format(n); } catch { return `$${n.toFixed(2)} ${c}`; }
@@ -28,7 +55,10 @@
 			if (!stripe) throw new Error('Stripe failed to load.');
 			const res = await fetch(`/api/payments/${encodeURIComponent(data.paymentId)}/intent`, { method: 'POST' });
 			if (!res.ok) throw new Error((await res.json().catch(() => null))?.message || 'Could not start the payment.');
-			clientSecret = ((await res.json()) as { clientSecret: string }).clientSecret;
+			const body = (await res.json()) as { clientSecret: string; intentId: string; fee: FeeBreakdown };
+			intentId = body.intentId;
+			fee = body.fee;
+			clientSecret = body.clientSecret;
 		} catch (e) {
 			initError = e instanceof Error ? e.message : 'Could not start the payment.';
 		}
@@ -53,7 +83,7 @@
 <div class="content-area">
 	<div class="card">
 		<a class="back" href="/payments">← Back to Payments</a>
-		<h1>{money(data.amount, data.currency)}</h1>
+		<h1>{money(clientSecret ? fee.totalCents / 100 : data.amount, data.currency)}</h1>
 		<p class="desc">{data.description}</p>
 
 		{#if data.paid}
@@ -65,10 +95,11 @@
 		{:else if clientSecret && stripe}
 			<Elements {stripe} {clientSecret} bind:elements>
 				<form on:submit|preventDefault={submit}>
-					<PaymentElement />
+					<FeeBreakdownView {fee} currency={data.currency} baseLabel="Balance" updating={feeUpdating} />
+					<PaymentElement on:change={onMethodChange} />
 					{#if formError}<div class="alert alert-error" style="margin-top:14px">{formError}</div>{/if}
-					<button class="btn btn-primary btn-full" type="submit" style="margin-top:18px" disabled={submitting || !elements}>
-						{submitting ? 'Processing…' : `Pay ${money(data.amount, data.currency)}`}
+					<button class="btn btn-primary btn-full" type="submit" style="margin-top:18px" disabled={submitting || feeUpdating || !elements}>
+						{submitting ? 'Processing…' : `Pay ${money(fee.totalCents / 100, data.currency)}`}
 					</button>
 				</form>
 			</Elements>

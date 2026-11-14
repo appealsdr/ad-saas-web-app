@@ -7,6 +7,8 @@
 	// instead of a build-time import failure that 500s the page.
 	import { env } from '$env/dynamic/public';
 	import type { PageData } from './$types';
+	import FeeBreakdownView from '$lib/components/payments/FeeBreakdown.svelte';
+	import { computeFee, type FeeBreakdown } from '$lib/payments/fees';
 
 	const PUBLIC_STRIPE_KEY = env.PUBLIC_STRIPE_KEY ?? '';
 
@@ -21,6 +23,31 @@
 	// `bind:elements` on the <Elements> component. The PaymentElement child
 	// renders the form; we hand `elements` to stripe.confirmPayment().
 	let elements: StripeElements | undefined;
+	let intentId = '';
+	let fee: FeeBreakdown = computeFee(Math.round(data.total * 100), 'card');
+	let feeUpdating = false;
+	let lastMethod = 'card';
+
+	// The client changed payment method -> ask the server to re-price the PaymentIntent with that method's fee.
+	async function onMethodChange(e: CustomEvent) {
+		const type = e.detail?.value?.type as string | undefined;
+		if (!type || type === lastMethod || !intentId) return;
+		lastMethod = type;
+		feeUpdating = true;
+		try {
+			const res = await fetch('/api/checkout/fee', {
+				method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ intentId, method: type })
+			});
+			if (!res.ok) throw new Error();
+			fee = ((await res.json()) as { fee: FeeBreakdown }).fee;
+			await elements?.fetchUpdates();
+			formError = null;
+		} catch {
+			formError = 'Could not update the processing fee. Please re-select your payment method.';
+		} finally {
+			feeUpdating = false;
+		}
+	}
 
 	onMount(async () => {
 		try {
@@ -47,7 +74,9 @@
 				const text = await res.text();
 				throw new Error(text || `Could not initialize payment (${res.status}).`);
 			}
-			const body = (await res.json()) as { clientSecret: string };
+			const body = (await res.json()) as { clientSecret: string; intentId: string; fee: FeeBreakdown };
+			intentId = body.intentId;
+			fee = body.fee;
 			clientSecret = body.clientSecret;
 		} catch (e) {
 			initError = e instanceof Error ? e.message : 'Could not initialize payment.';
@@ -121,13 +150,14 @@
 		{:else if clientSecret && stripe}
 			<Elements {stripe} {clientSecret} bind:elements>
 				<form on:submit|preventDefault={handleSubmit}>
-					<PaymentElement />
+					<FeeBreakdownView {fee} currency={data.currency} baseLabel="Due now" updating={feeUpdating} />
+					<PaymentElement on:change={onMethodChange} />
 					{#if formError}
 						<div class="alert alert-error" style="margin-top:14px">{formError}</div>
 					{/if}
 					<button class="btn btn-primary btn-full" type="submit"
-						style="margin-top:18px" disabled={submitting || !elements}>
-						{submitting ? 'Processing…' : `Pay ${formatPrice(data.total, data.currency)}`}
+						style="margin-top:18px" disabled={submitting || feeUpdating || !elements}>
+						{submitting ? 'Processing…' : `Pay ${formatPrice(fee.totalCents / 100, data.currency)}`}
 					</button>
 				</form>
 			</Elements>
