@@ -37,6 +37,7 @@
     "@aws-sdk/s3-request-presigner": "^3.1063.0",
     "@google/genai": "^2.18.0",
     "@stripe/stripe-js": "^9.7.0",
+    "libphonenumber-js": "^1.13.16",
     "otplib": "^13.5.0",
     "pgsql-ast-parser": "^12.0.2",
     "postgres": "^3.4.9",
