@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
 	import PasswordInput from '$components/ui/PasswordInput.svelte';
+	import { onMount } from 'svelte';
 	import type { ActionData, PageData } from './$types';
 
 	export let form: ActionData;
@@ -8,6 +9,23 @@
 
 	$: nextPath = data.next ?? '';
 	let loading = false;
+	// Bot signals: a timestamp stamped when the form mounts (a script that POSTs directly never sets it)
+	// and Cloudflare Turnstile when a site key is configured.
+	let startedAt = '';
+	let turnstileEl: HTMLDivElement;
+	onMount(() => {
+		startedAt = String(Date.now());
+		if (!data.turnstileSiteKey) return;
+		const s = document.createElement('script');
+		s.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
+		s.async = true;
+		s.onload = () => (window as unknown as { turnstile: { render: (el: HTMLElement, o: object) => void } }).turnstile.render(turnstileEl, { sitekey: data.turnstileSiteKey });
+		document.head.appendChild(s);
+	});
+	const resetTurnstile = () => {
+		const t = (window as unknown as { turnstile?: { reset: () => void } }).turnstile;
+		if (data.turnstileSiteKey && t) t.reset();
+	};
 </script>
 
 <svelte:head>
@@ -40,16 +58,22 @@
 		action="?/register"
 		use:enhance={() => {
 			loading = true;
-			return ({ update }) => { loading = false; update(); };
+			return ({ update }) => { loading = false; resetTurnstile(); update({ reset: false }); };
 		}}
 	>
 		{#if nextPath}
 			<input type="hidden" name="next" value={nextPath} />
 		{/if}
+		<input type="hidden" name="_t" value={startedAt} />
+		<!-- Honeypot: invisible to people; bots that fill every field get silently dropped. -->
+		<div class="hp" aria-hidden="true">
+			<label for="fax_number">Fax</label>
+			<input id="fax_number" name="fax_number" type="text" tabindex="-1" autocomplete="off" />
+		</div>
 		<div class="form-group">
 			<label for="name">Full name</label>
 			<input id="name" name="name" type="text" class="form-control"
-				placeholder="Jane Doe" required value={form?.name ?? ''} />
+				placeholder="Jane Doe" required autocomplete="name" value={form?.name ?? ''} />
 		</div>
 
 		<div class="form-group">
@@ -88,6 +112,8 @@
 			<PasswordInput id="confirm" name="confirm" placeholder="Repeat password" required autocomplete="new-password" />
 		</div>
 
+		{#if data.turnstileSiteKey}<div bind:this={turnstileEl} class="form-group"></div>{/if}
+
 		<button type="submit" class="btn btn-primary btn-full btn-lg" disabled={loading}>
 			{loading ? 'Creating account…' : 'Create account'}
 		</button>
@@ -112,6 +138,7 @@
 </div>
 
 <style>
+	.hp { position: absolute; left: -10000px; width: 1px; height: 1px; overflow: hidden; }
 	.auth-card {
 		background: white;
 		border-radius: 20px;

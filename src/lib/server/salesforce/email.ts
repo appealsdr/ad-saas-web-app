@@ -191,3 +191,37 @@ If you did not expect this, contact us right away so we can secure your account.
 	if (context.sfdcContactId) await logEmailToContact(context.sfdcContactId, { toAddress: email, subject, textBody: body }, context);
 	return true;
 }
+
+/** AD-1946: confirm the address of a public signup before any Salesforce records are created. */
+export async function sendVerificationEmail(email: string, verifyUrl: string, context: { userId?: string; accountId?: string } = {}): Promise<void> {
+	const body = `
+Hello,
+
+Thanks for signing up for Appeals Doctor. Please confirm your email address (${email}) to finish creating your account. The link expires in 24 hours.
+
+${verifyUrl}
+
+If you did not sign up, you can safely ignore this email — no account will be activated.
+
+— The Appeals Doctor Team
+`.trim();
+	try {
+		await sendEmailViaSalesforce({
+			emailAddresses: email,
+			emailSubject: 'Confirm your Appeals Doctor email address',
+			emailBody: body,
+			senderDisplayName: 'Appeals Doctor'
+		});
+	} catch (e) {
+		await logError({
+			source: 'salesforce.email',
+			operation: 'send_verification',
+			userId: context.userId,
+			accountId: context.accountId,
+			errorMessage: e instanceof Error ? e.message : String(e),
+			stack: e instanceof Error ? e.stack : undefined,
+			context: { email }
+		});
+		throw e;
+	}
+}

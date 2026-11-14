@@ -24,6 +24,9 @@ import { logError, describeError } from '$lib/server/error_log';
 import { setSessionCookie } from '$lib/server/auth/cookie';
 import { resolvePostAuthPath, safeNextUrl } from '$lib/server/auth/redirects';
 import { updateSalesforceContact } from '$lib/server/salesforce/records';
+import { createVerificationToken } from '$lib/server/auth/email_verification';
+import { sendVerificationEmail } from '$lib/server/salesforce/email';
+import { hitRateLimit } from '$lib/server/admin/rate_limit';
 
 const FORCED_RESET_TTL_MS = 60 * 60 * 1000; // 1h — matches password_reset_tokens convention
 
@@ -55,6 +58,7 @@ interface UserRow {
 	failed_login_attempts: number;
 	locked_until: string | null;
 	sfdc_contact_id: string | null;
+	email_verification_pending: boolean;
 }
 
 function formatLockedMessage(lockedUntil: Date): string {
@@ -68,6 +72,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 	return {
 		next: safeNextUrl(url.searchParams.get('next')),
 		passwordReset: url.searchParams.get('reset') === '1',
+		emailVerified: url.searchParams.get('verified') === '1',
 		// Pre-fill the email when arriving from "Sign in instead" on /register.
 		email: url.searchParams.get('email') ?? ''
 	};
@@ -92,7 +97,7 @@ export const actions: Actions = {
 		try {
 			const rows = await sql<UserRow[]>`
 				SELECT id, email, password_hash, is_active, must_reset_password,
-				       failed_login_attempts, locked_until, sfdc_contact_id
+				       failed_login_attempts, locked_until, sfdc_contact_id, email_verification_pending
 				FROM users
 				WHERE email = ${email}
 				LIMIT 1
@@ -157,6 +162,19 @@ export const actions: Actions = {
 				});
 			}
 			return fail(401, { error: GENERIC_AUTH_ERROR, email });
+		}
+
+		// ─── 3b. Unverified public signup (AD-1946) ────────────────────
+		// Correct password but the email was never confirmed: no session. Re-send the link (rate-limited).
+		if (row.email_verification_pending) {
+			const lim = await hitRateLimit(`signup:resend:${row.email}`, 3, 3600);
+			if (lim.allowed) {
+				try {
+					const raw = await createVerificationToken(row.id, row.email);
+					await sendVerificationEmail(row.email, `${url.origin}/register/verify?token=${raw}`, { userId: row.id });
+				} catch { /* logged inside sendVerificationEmail */ }
+			}
+			return fail(403, { error: 'Please confirm your email address first. We\'ve sent you a new confirmation link.', email });
 		}
 
 		// ─── 4. Bump last_login_at, clear any failed-attempt count ─────

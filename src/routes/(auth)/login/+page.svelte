@@ -34,6 +34,10 @@
 		</div>
 	{/if}
 
+	{#if data.emailVerified}
+		<div class="alert alert-success" style="margin-bottom:16px">Your email is already confirmed. Sign in to continue.</div>
+	{/if}
+
 	<!-- Error banner -->
 	{#if form?.error}
 		<div class="alert alert-error" style="margin-bottom:16px">{form.error}</div>

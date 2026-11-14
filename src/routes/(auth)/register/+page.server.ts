@@ -1,48 +1,37 @@
 /**
- * Registration flow.
+ * Registration flow (AD-1946 hardened).
  *
- *  1. Validate inputs:
- *       - Required: name, company, email, phone, website, password, confirm
- *       - email matches a minimal regex, password ≥ 8 chars, passwords match
- *       - phone has ≥ 7 digits (lenient — accept international formats)
- *       - website looks like a domain or URL (prepended with https:// before SF)
- *  2. Reject if a user already exists with that email.
- *  3. Inside ONE Postgres transaction:
- *       a. INSERT accounts row (name=company, email, phone, website).
- *       b. INSERT users row, account_id → the new account, password hashed (scrypt).
- *  4. Best-effort Salesforce sync (non-blocking for registration success):
- *       a. Create Account in SF (Name, Primary_Email__c, Phone, Website, Start_Date__c).
- *       b. Create Contact in SF (FirstName, LastName, Email, Phone) linked via AccountId.
- *       c. UPDATE local accounts.sfdc_account_id and users.sfdc_*_id with the IDs.
- *     If SF fails (auth not configured, network, validation, etc.) enqueue
- *     Account + Contact rows into sfdc_sync_queue for the background worker
- *     to retry. The registration itself still succeeds.
- *  5. Create a DB-backed session row, set the cookie, redirect to /dashboard.
+ *  1. Bot checks: honeypot + minimum fill time + Cloudflare Turnstile + per-IP / per-mailbox rate limits.
+ *     A honeypot/timing hit gets a fake "check your email" so bots get no signal.
+ *  2. Validate inputs (see $lib/server/auth/signup_validation): real first+last name, plausible company,
+ *     non-disposable email, valid phone (E.164), resolvable website, password rules.
+ *  3. Reject duplicates (Gmail dot/+tag variants count as the same mailbox) and existing Salesforce Contacts.
+ *  4. Create the LOCAL account + user in one transaction, flagged email_verification_pending.
+ *  5. Email a verification link. NOTHING is created in Salesforce and no session is issued yet.
+ *  6. /register/verify (on click) clears the flag, runs finalizeSignup (S3 folders, Salesforce Account +
+ *     Contact) and signs the user in.
  */
 import { fail, redirect } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
 import { sql } from '$lib/server/db';
 import { hashPassword } from '$lib/server/auth/password';
-import { createSession } from '$lib/server/auth/session';
 import { logError, describeError } from '$lib/server/error_log';
-import { setSessionCookie } from '$lib/server/auth/cookie';
 import { resolvePostAuthPath, safeNextUrl } from '$lib/server/auth/redirects';
+import { findContactByEmail } from '$lib/server/salesforce';
+import { env } from '$env/dynamic/private';
+import { env as publicEnv } from '$env/dynamic/public';
+import { hitRateLimit } from '$lib/server/admin/rate_limit';
+import { verifyTurnstile } from '$lib/server/auth/turnstile';
+import { createVerificationToken } from '$lib/server/auth/email_verification';
+import { sendVerificationEmail } from '$lib/server/salesforce/email';
+import { domainResolves, hostFromWebsite } from '$lib/server/auth/domain_check';
 import {
-	createSalesforceAccountAndContact,
-	enqueueAccountContactSync,
-	findContactByEmail,
-	splitFullName
-} from '$lib/server/salesforce';
-import { ensureAccountFolders } from '$lib/server/storage/s3-paths';
-import { ensureOwnerAccountContact } from '$lib/server/account/contacts';
+	validateFullName, validateCompanyName, validateEmail, validatePhone, validateWebsite,
+	canonicalEmailKey, looksLikeBot
+} from '$lib/server/auth/signup_validation';
 
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-// Lenient — at least 7 digits, otherwise we'd reject too many real numbers.
-const PHONE_DIGITS_MIN = 7;
-// Allow either a full URL or a bare domain. We prepend https:// for SF.
-const WEBSITE_RE = /^(https?:\/\/)?([\w-]+\.)+[\w-]{2,}([/?#].*)?$/i;
-
-const SESSION_COOKIE_MAX_AGE = 60 * 60 * 3; // 3h — must match auth/session.ts TTL
+const SIGNUPS_PER_IP_PER_HOUR = 5;
+const SIGNUPS_PER_MAILBOX_PER_HOUR = 3;
 
 interface FormEcho {
 	name: string;
@@ -69,37 +58,53 @@ function echo(data: FormData): FormEcho {
 
 export const load: PageServerLoad = async ({ locals, url }) => {
 	if (locals.user) throw redirect(303, resolvePostAuthPath(url.searchParams.get('next')));
-	return { next: safeNextUrl(url.searchParams.get('next')) };
+	return { next: safeNextUrl(url.searchParams.get('next')), turnstileSiteKey: publicEnv.PUBLIC_TURNSTILE_SITE_KEY ?? '' };
 };
 
 export const actions: Actions = {
-	register: async ({ request, cookies, getClientAddress, url }) => {
+	register: async ({ request, getClientAddress, url }) => {
 		const data = await request.formData();
 		const back = echo(data);
-		const name = back.name.trim();
-		const company = back.company.trim();
+		const name = back.name.trim().replace(/\s+/g, ' ');
+		const company = back.company.trim().replace(/\s+/g, ' ');
 		const email = back.email.trim().toLowerCase();
-		const phone = back.phone.trim();
 		const website = back.website.trim();
 		const password = String(data.get('password') ?? '');
 		const confirm = String(data.get('confirm') ?? '');
+		const ip = (() => { try { return getClientAddress(); } catch { return 'unknown'; } })();
+		const checkEmailPath = `/register/check-email?email=${encodeURIComponent(email)}`;
 
-		// ─── 1. Validation ────────────────────────────────────────────
-		if (!name || !company || !email || !phone || !website || !password || !confirm) {
+		// ─── 1. Bot checks ────────────────────────────────────────────
+		// Honeypot / too-fast / no-JS submissions: pretend it worked so the bot learns nothing.
+		if (looksLikeBot({ honeypot: String(data.get('fax_number') ?? ''), startedAt: String(data.get('_t') ?? '') })) {
+			throw redirect(303, checkEmailPath);
+		}
+		const ipLimit = await hitRateLimit(`signup:ip:${ip}`, SIGNUPS_PER_IP_PER_HOUR, 3600);
+		if (!ipLimit.allowed) {
+			return fail(429, { ...back, error: 'Too many signup attempts. Please try again later.' });
+		}
+		if (!(await verifyTurnstile(String(data.get('cf-turnstile-response') ?? ''), ip))) {
+			return fail(400, { ...back, error: 'We could not verify that you are human. Please refresh the page and try again.' });
+		}
+
+		// ─── 2. Validation ────────────────────────────────────────────
+		if (!name || !company || !email || !back.phone.trim() || !website || !password || !confirm) {
 			return fail(400, { ...back, error: 'All fields are required.' });
 		}
-		if (!EMAIL_RE.test(email)) {
-			return fail(400, { ...back, error: 'Please enter a valid email address.' });
-		}
-		const phoneDigits = phone.replace(/\D/g, '');
-		if (phoneDigits.length < PHONE_DIGITS_MIN) {
-			return fail(400, { ...back, error: 'Please enter a valid phone number.' });
-		}
-		if (!WEBSITE_RE.test(website)) {
-			return fail(400, {
-				...back,
-				error: 'Please enter a valid website (e.g. acme.com or https://acme.com).'
-			});
+		const nameErr = validateFullName(name);
+		if (nameErr) return fail(400, { ...back, error: nameErr });
+		const companyErr = validateCompanyName(company);
+		if (companyErr) return fail(400, { ...back, error: companyErr });
+		const emailErr = validateEmail(email, (env.SIGNUP_BLOCKED_EMAIL_DOMAINS ?? '').split(','));
+		if (emailErr) return fail(400, { ...back, error: emailErr });
+		const phoneRes = validatePhone(back.phone);
+		if (!phoneRes.ok) return fail(400, { ...back, error: phoneRes.error });
+		const phone = phoneRes.e164;
+		const websiteErr = validateWebsite(website);
+		if (websiteErr) return fail(400, { ...back, error: websiteErr });
+		const host = hostFromWebsite(website);
+		if (!host || !(await domainResolves(host))) {
+			return fail(400, { ...back, error: 'We could not find that website. Please enter your real company website (e.g. acme.com).' });
 		}
 		if (password !== confirm) {
 			return fail(400, { ...back, error: 'Passwords do not match.' });
@@ -108,23 +113,34 @@ export const actions: Actions = {
 			return fail(400, { ...back, error: 'Password must be at least 8 characters.' });
 		}
 
-		// ─── 2. Duplicate check ───────────────────────────────────────
-		const existing = await sql<{ id: string }[]>`
-			SELECT id FROM users WHERE email = ${email} LIMIT 1
-		`;
+		// ─── 3. Duplicate checks ──────────────────────────────────────
+		// Same mailbox: exact email, or (Gmail) the same address ignoring dots / +tags.
+		const canonical = canonicalEmailKey(email);
+		const existing = await sql<{ id: string; email: string; pending: boolean }[]>`
+			SELECT id, email, email_verification_pending AS pending FROM users
+			WHERE email = ${email}
+			   OR (email ~* '@(gmail|googlemail)\.com$'
+			       AND replace(split_part(split_part(lower(email), '@', 1), '+', 1), '.', '') || '@gmail.com' = ${canonical})
+			LIMIT 1`;
 		if (existing.length) {
+			// A signup that never confirmed: just send a fresh link (rate-limited) instead of "already exists".
+			if (existing[0].pending && existing[0].email === email) {
+				const lim = await hitRateLimit(`signup:mailbox:${canonical}`, SIGNUPS_PER_MAILBOX_PER_HOUR, 3600);
+				if (lim.allowed) await sendNewVerification(existing[0].id, email, url.origin).catch(() => {});
+				throw redirect(303, checkEmailPath);
+			}
 			return fail(409, {
 				...back,
 				error: 'An account with this email already exists.',
 				emailTaken: true
 			});
 		}
+		const mailboxLimit = await hitRateLimit(`signup:mailbox:${canonical}`, SIGNUPS_PER_MAILBOX_PER_HOUR, 3600);
+		if (!mailboxLimit.allowed) {
+			return fail(429, { ...back, error: 'Too many signup attempts for this email. Please try again later.' });
+		}
 
-		// ─── 2b. Salesforce duplicate-Contact check ────────────────────
-		// Catch this before creating anything — otherwise Salesforce's own
-		// duplicate rule rejects the Contact create AFTER the Account was
-		// already created, leaving an orphaned Account and a local account
-		// row with no sfdc_account_id (surfaces later as a checkout failure).
+		// Salesforce duplicate-Contact check — before creating anything (see git history for why).
 		const existingContact = await findContactByEmail(email);
 		if (existingContact) {
 			return fail(409, {
@@ -135,30 +151,26 @@ export const actions: Actions = {
 			});
 		}
 
-		// ─── 3. DB transaction: create account + user ─────────────────
+		// ─── 4. DB transaction: create account + user (unverified) ────
 		const passwordHash = await hashPassword(password);
 		let accountId: string;
 		let userId: string;
-		let accountCreatedAt: Date;
 		try {
-			[accountId, userId, accountCreatedAt] = await sql.begin(async (sql) => {
-				const [account] = await sql<{ id: string; created_at: Date }[]>`
+			[accountId, userId] = await sql.begin(async (sql) => {
+				const [account] = await sql<{ id: string }[]>`
 					INSERT INTO accounts (name, email, phone, website)
 					VALUES (${company}, ${email}, ${phone}, ${website})
-					RETURNING id, created_at
-				`;
-				const [user] = await sql<{ id: string }[]>`
-					INSERT INTO users (email, display_name, password_hash, account_id, role, last_login_at)
-					VALUES (${email}, ${name}, ${passwordHash}, ${account.id}, 'owner', now())
 					RETURNING id
 				`;
-				return [account.id, user.id, account.created_at];
+				const [user] = await sql<{ id: string }[]>`
+					INSERT INTO users (email, display_name, password_hash, account_id, role, last_login_at, email_verification_pending)
+					VALUES (${email}, ${name}, ${passwordHash}, ${account.id}, 'owner', NULL, true)
+					RETURNING id
+				`;
+				return [account.id, user.id];
 			});
 		} catch (e) {
-			// A concurrent signup can slip past the SELECT check above and only
-			// collide on the `users.email` / `accounts.email` UNIQUE constraint
-			// (Postgres error 23505). Surface the same friendly duplicate message
-			// instead of a generic 500.
+			// A concurrent signup can slip past the SELECT above and only collide on the UNIQUE constraint.
 			if (e && typeof e === 'object' && (e as { code?: string }).code === '23505') {
 				return fail(409, {
 					...back,
@@ -180,93 +192,21 @@ export const actions: Actions = {
 			});
 		}
 
-		// ─── 3b. Reserve S3 folders for this account (best-effort) ────
-		// Writes `<root>/<accountId>/.placeholder` and `<root>/<accountId>/invoices/.placeholder`
-		// so the AWS console shows the directory tree from day one. Failures
-		// are swallowed inside ensureAccountFolders — never blocks registration.
-		await ensureAccountFolders(accountId);
-
-		// ─── 4. Salesforce sync (best-effort) ─────────────────────────
-		const { firstName, lastName } = splitFullName(name);
-		const sfInput = {
-			companyName: company,
-			firstName,
-			lastName,
-			email,
-			phone,
-			website,
-			startDate: accountCreatedAt
-		};
-		const sfResult = await createSalesforceAccountAndContact(sfInput, { userId, accountId });
-
-		if (sfResult.ok) {
-			try {
-				await sql.begin(async (sql) => {
-					await sql`
-						UPDATE accounts SET sfdc_account_id = ${sfResult.sfdcAccountId}
-						WHERE id = ${accountId}
-					`;
-					await sql`
-						UPDATE users
-						SET sfdc_contact_id = ${sfResult.sfdcContactId},
-						    sfdc_account_id = ${sfResult.sfdcAccountId}
-						WHERE id = ${userId}
-					`;
-				});
-			} catch (e) {
-				// Local rows + real SF IDs exist; we just couldn't link them.
-				// A reconcile job can patch using the SF IDs in this log entry.
-				const desc = describeError(e);
-				await logError({
-					source: 'register',
-					operation: 'persist_sfdc_ids',
-					userId,
-					accountId,
-					errorMessage: desc.errorMessage,
-					stack: desc.stack,
-					context: {
-						sfdcAccountId: sfResult.sfdcAccountId,
-						sfdcContactId: sfResult.sfdcContactId
-					}
-				});
-			}
-		} else {
-			// SF sync itself already logged its own error_log row in sync.ts.
-			// Try to queue for retry; if that also fails, log a 'warn' since
-			// the user-facing registration is still fine.
-			try {
-				await enqueueAccountContactSync({
-					accountRowId: accountId,
-					userRowId: userId,
-					input: sfInput,
-					failureReason: sfResult.error
-				});
-			} catch (e) {
-				const desc = describeError(e);
-				await logError({
-					source: 'register',
-					operation: 'enqueue_sfdc_sync',
-					severity: 'warn',
-					userId,
-					accountId,
-					errorMessage: desc.errorMessage,
-					stack: desc.stack,
-					context: { originalSfError: sfResult.error, originalSfErrorCode: sfResult.errorCode }
-				});
-			}
+		// ─── 5. Verification email ────────────────────────────────────
+		try {
+			await sendNewVerification(userId, email, url.origin, accountId);
+		} catch {
+			// Couldn't deliver — remove the unverified rows so the user can retry cleanly.
+			await sql`DELETE FROM users WHERE id = ${userId}`.catch(() => {});
+			await sql`DELETE FROM accounts WHERE id = ${accountId}`.catch(() => {});
+			return fail(502, { ...back, error: 'We could not send your confirmation email. Please check the address and try again.' });
 		}
 
-		await ensureOwnerAccountContact(accountId, userId);
-
-		// ─── 5. Session ───────────────────────────────────────────────
-		const ipAddress = getClientAddress();
-		const userAgent = request.headers.get('user-agent') ?? undefined;
-		const { rawToken } = await createSession(userId, { ipAddress, userAgent });
-
-		setSessionCookie(cookies, { url }, rawToken, SESSION_COOKIE_MAX_AGE);
-
-		const nextFromForm = String(data.get('next') ?? '');
-		const nextFromUrl = url.searchParams.get('next');
-		throw redirect(303, resolvePostAuthPath(nextFromForm || nextFromUrl));
+		throw redirect(303, checkEmailPath);
 	}
 };
+
+async function sendNewVerification(userId: string, email: string, origin: string, accountId?: string): Promise<void> {
+	const raw = await createVerificationToken(userId, email);
+	await sendVerificationEmail(email, `${origin}/register/verify?token=${raw}`, { userId, accountId });
+}
