@@ -132,6 +132,16 @@
 					<span>{item.name}{item.quantity > 1 ? ` × ${item.quantity}` : ''}</span>
 					<strong>{formatPrice(item.dueNow, item.currency)}{#if item.dueNow < item.lineTotal} <small class="of">of {formatPrice(item.lineTotal, item.currency)}</small>{/if}</strong>
 				</li>
+				{#if item.isDeposit}
+					<li class="dep-row">
+						{#if data.monthly}
+							<span>First month today. The remaining <strong>{formatPrice(item.balanceLater, item.currency)}</strong> is billed monthly on each payment's due date.</span>
+						{:else}
+							<span><strong>Deposit</strong> — {formatPrice(item.dueNow, item.currency)} is charged today. The remaining
+								<strong>{formatPrice(item.balanceLater, item.currency)}</strong> is a separate payment that is requested <strong>after this service's case is completed</strong>; it is not charged today.</span>
+						{/if}
+					</li>
+				{/if}
 			{/each}
 			{#if fee.feeCents > 0}
 				<li class="fee-row">
@@ -147,8 +157,9 @@
 		{#if data.balanceTotal > 0}
 			<p class="split-note">
 				The remaining <strong>{formatPrice(data.balanceTotal, data.currency)}</strong> of your {formatPrice(data.orderTotal, data.currency)} order is
-				<strong>not charged today</strong>. It is billed as separate payments when each case is completed, and you'll see every payment on your
-				<a href="/payments">Payments</a> screen.
+				<strong>not charged today</strong>.
+				{#if data.monthly}It is billed in monthly installments{:else}Each deposit balance is requested when its case is completed{/if},
+				and you'll see every payment on your <a href="/payments">Payments</a> screen.
 			</p>
 		{/if}
 
@@ -203,6 +214,7 @@
 	.of { font-weight: 500; color: var(--grey-text); font-size: 11px; }
 	.split-note { font-size: 13px; background: var(--orange-lt); border: 1px solid var(--orange); border-radius: var(--radius); padding: 10px 14px; margin: 12px 0; color: var(--navy); line-height: 1.5; }
 	.fee-hint { font-size: 12px; color: var(--grey-text); margin: 0 0 12px; }
+	.recap li.dep-row { display: block; font-size: 12px; color: var(--grey-text); line-height: 1.45; padding-top: 0; border-bottom: 1px solid var(--grey-line); }
 	.recap li.fee-row { font-size: 13px; color: var(--grey-text); }
 	.recap li.total-row { font-size: 14px; font-weight: 700; color: var(--navy); }
 	.recap li strong { font-variant-numeric: tabular-nums; }

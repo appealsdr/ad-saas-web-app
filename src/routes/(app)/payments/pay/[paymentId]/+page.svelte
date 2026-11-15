@@ -90,6 +90,14 @@
 		{#if data.fee > 0 && !data.paid && !clientSecret}
 			<p class="desc">{money(data.amount, data.currency)} balance + {money(data.fee, data.currency)} card processing fee (charged by Stripe)</p>
 		{/if}
+		{#if data.isDepositBalance}
+			<div class="alert alert-info">
+				<strong>Deposit balance.</strong> You already paid the deposit for this service when you ordered it. This is the remaining part, and it is
+				{#if data.paid}now paid.
+				{:else if data.payable}due now because the case for this service is complete.
+				{:else}<strong>paid after the case for this service is completed</strong> — nothing is due today. We'll let you know when it is requested.{/if}
+			</div>
+		{/if}
 		<p class="desc"><a href={`/payments?contract=${data.contractId}`}>View full contract details →</a></p>
 
 		{#if data.paid}
