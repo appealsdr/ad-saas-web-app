@@ -1,6 +1,9 @@
 # Account merge — proposal (AD-1944)
 
-Status: **proposal, not implemented.** The admin tab *Accounts → Account merge* currently only lists likely duplicates.
+Status: **implemented for two accounts at a time** (admin → Accounts → Account merge → Review merge). Requires migration `036_account_merge.sql`.
+Staff pick the account that stays, then choose: which value wins per account field and for the Stripe customer; which logins stay (one owner) or are disabled;
+which stores, contracts, contacts and activity move; and whether to re-parent the moved records in Salesforce. Everything unchosen stays on the retired account.
+Not built: the Apex `Database.merge` route and re-parenting of Salesforce records the platform does not track (cases etc.), N-way merges (chain two-account merges), and undo.
 
 ## The situation
 

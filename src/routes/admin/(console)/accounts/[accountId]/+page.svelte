@@ -62,6 +62,13 @@
 	let draft: Record<string, string> = {};
 	let saving = false;
 	let modal: 'create' | 'sync' | 'delete' | null = null;
+	let reauthForm: HTMLFormElement | undefined;
+	let signingOut = false;
+	// Opening the delete dialog without a fresh MFA verification signs the staff member out (security), returning here after sign-in.
+	$: if (modal === 'delete' && !data.freshMfa && reauthForm && !signingOut) {
+		signingOut = true;
+		setTimeout(() => reauthForm?.requestSubmit(), 1800); // brief pause so the message can be read
+	}
 	$: inSf = data.sfState === 'synced';
 	function startEdit() { draft = Object.fromEntries(EDIT_FIELDS.map(([k]) => [k, get(k)])); editing = true; previewing = false; }
 	function cancelEdit() { editing = false; previewing = false; }
@@ -185,10 +192,14 @@
 	<RecordModal kind="delete" title="Permanently delete account"
 		body="This deletes the account and all related records from the database (users, stores, documents, contracts, logs). Salesforce and Stripe are not touched. This cannot be undone."
 		recordName={a.name} recordId={a.id} action="?/delete" confirmText={a.name} submitLabel="Permanently delete account"
-		error={data.freshMfa ? null : 'MFA verification required — your last verification was over 15 minutes ago. Re-verify before deleting.'}
+		error={data.freshMfa ? null : 'Your last MFA verification was more than 5 minutes ago. For security you are being signed out — sign in again to continue.'}
 		on:close={() => (modal = null)} />
-	{#if !data.freshMfa}<a class="mfa" href="/admin/reauth?next={encodeURIComponent($page.url.pathname)}">Verify MFA</a>{/if}
 {/if}
+
+<!-- Stale MFA when a destructive action is opened: sign the user out and bring them back here after signing in again. -->
+<form method="POST" action="/admin/logout" bind:this={reauthForm} hidden>
+	<input type="hidden" name="next" value={$page.url.pathname} />
+</form>
 
 <style>
 	.sfbar { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; border: 1px solid; border-radius: 10px; padding: 10px 16px; font-size: 13px; margin-bottom: 16px; }
@@ -222,6 +233,5 @@
 	.x { background: none; border: none; font-size: 16px; cursor: pointer; color: var(--grey-text); }
 	.mbody { padding: 18px; overflow: auto; }
 	.modal footer { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 18px; border-top: 1px solid var(--grey-line); }
-	.mfa { position: fixed; z-index: 1400; right: 24px; bottom: 24px; background: var(--navy); color: #fff; padding: 8px 14px; border-radius: 8px; font-weight: 700; text-decoration: none; }
 	@media (max-width: 900px) { .grid { grid-template-columns: 1fr 1fr; } .grid.th { display: none; } }
 </style>

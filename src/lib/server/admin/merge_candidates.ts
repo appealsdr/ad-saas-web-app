@@ -72,16 +72,25 @@ export function findDuplicateGroups(accounts: AccountLite[]): DupGroup[] {
 
 /** Load accounts (bounded) and return duplicate groups. */
 export async function listDuplicateGroups(limit = 5000): Promise<{ groups: DupGroup[]; scanned: number }> {
-	const rows = await sql<(Omit<AccountLite, 'emails'> & { emails: string[] | null })[]>`
+	// Retired (already merged) accounts are not candidates. The column only exists after migration 036, so fall back without it.
+	const query = (excludeMerged: boolean) => sql<(Omit<AccountLite, 'emails'> & { emails: string[] | null })[]>`
 		SELECT a.id, a.name, a.website, a.sfdc_account_id, a.created_at,
 		       array_remove(array_agg(DISTINCT lower(u.email)) || array[lower(a.email)], NULL) AS emails,
 		       (SELECT count(*)::int FROM users u2 WHERE u2.account_id = a.id) AS user_count,
 		       (SELECT count(*)::int FROM stores s WHERE s.account_id = a.id) AS store_count,
 		       (SELECT count(*)::int FROM service_contracts c WHERE c.account_id = a.id) AS contract_count
 		FROM accounts a LEFT JOIN users u ON u.account_id = a.id
+		${excludeMerged ? sql`WHERE a.merged_into_account_id IS NULL` : sql``}
 		GROUP BY a.id
 		ORDER BY a.created_at DESC
 		LIMIT ${limit}`;
+	let rows;
+	try {
+		rows = await query(true);
+	} catch (e) {
+		if ((e as { code?: string })?.code !== '42703') throw e;
+		rows = await query(false);
+	}
 	const accounts = rows.map((r) => ({ ...r, emails: r.emails ?? [] }));
 	return { groups: findDuplicateGroups(accounts), scanned: accounts.length };
 }
