@@ -55,7 +55,14 @@ export const load: PageServerLoad = async ({ url, locals }) => {
 			groupedMap.set(p.pricebookEntryId, { ...p, quantity: 1, lineTotal: p.unitPrice, dueNow: dueNow(p) });
 		}
 	}
-	const groupedItems = [...groupedMap.values()];
+	// Per grouped line: the part not charged today. Pay-monthly (recurring) products are billed in monthly installments;
+	// deposit services have their remaining balance requested once that service's case is completed.
+	const monthly = kind === 'recurring' && recurring?.payOption === 'monthly';
+	const groupedItems = [...groupedMap.values()].map((g) => ({
+		...g,
+		balanceLater: Math.round((g.lineTotal - g.dueNow) * 100) / 100,
+		isDeposit: g.paymentType === 'Deposit' && g.lineTotal - g.dueNow > 0
+	}));
 
 	const storeId = url.searchParams.get('store')?.trim() || null;
 
@@ -66,6 +73,7 @@ export const load: PageServerLoad = async ({ url, locals }) => {
 		chargeTotal,
 		orderTotal,
 		balanceTotal,
+		monthly,
 		currency,
 		pricebookEntryIds: items.map((p) => p.pricebookEntryId),
 		userEmail: locals.user.email,

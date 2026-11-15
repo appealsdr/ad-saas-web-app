@@ -30,6 +30,8 @@ export const load: PageServerLoad = async ({ params, locals }) => {
 		status: p.Status__c ?? 'Pending',
 		// Informational only — /api/payments/:id/intent re-checks Salesforce before any charge.
 		payable: p.Status__c === STATUS_REQUEST,
-		paid: p.Status__c === 'Paid'
+		paid: p.Status__c === 'Paid',
+		// The remaining part of a deposit service (its deposit was paid when ordering).
+		isDepositBalance: p.Payment_Type__c === 'Balance' && !!p.Contract_Line_Item__c
 	};
 };
