@@ -94,15 +94,19 @@
 							</div>
 						{/if}
 						<label class="chk"><input type="checkbox" name="createLogin" checked /> Create an owner login (temporary password, must be changed at first sign-in)</label>
-						<label>Login contact
-							<select name="sfdcContactId">
-								{#each c.contacts.filter((k) => k.email) as k}<option value={k.id}>{k.name || k.email} — {k.email}</option>{/each}
-							</select>
-						</label>
-						<label>Reason (audited)
-							<input name="reason" required minlength="5" maxlength="500" placeholder="e.g. Client onboarded in Salesforce; needs platform access" style="min-width:340px" />
-						</label>
-						<button class="adm-btn" type="submit" disabled={busy === c.sfdcAccountId}>{busy === c.sfdcAccountId ? 'Provisioning…' : 'Provision'}</button>
+						<div class="adm-row fields">
+							<label>Login contact
+								<select name="sfdcContactId">
+									{#each c.contacts.filter((k) => k.email) as k}<option value={k.id}>{k.name || k.email} — {k.email}</option>{/each}
+								</select>
+							</label>
+							<label class="grow">Reason (audited)
+								<input name="reason" required minlength="5" maxlength="500" placeholder="e.g. Client onboarded in Salesforce; needs platform access" />
+							</label>
+						</div>
+						<div class="actions">
+							<button class="adm-btn sm" type="submit" disabled={busy === c.sfdcAccountId}>{busy === c.sfdcAccountId ? 'Provisioning…' : 'Provision'}</button>
+						</div>
 					</fieldset>
 				</form>
 			{:else}
@@ -121,6 +125,10 @@
 	.cols h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--grey-text); margin: 8px 0 4px; }
 	.cols ul { margin: 0; padding-left: 18px; }
 	.chk { display: block; margin: 4px 0; }
+	.fields { margin-bottom: 0; }
+	.fields .grow { flex: 1; min-width: 260px; }
+	.fields select { min-width: 280px; }
+	.actions { display: flex; justify-content: flex-end; }
 	.adm-fieldset { border: 1px solid var(--grey-line); border-radius: 8px; padding: 10px 14px; margin: 12px 0 14px; display: grid; gap: 10px; }
 	@media (max-width: 800px) { .cols { grid-template-columns: 1fr; } }
 </style>
