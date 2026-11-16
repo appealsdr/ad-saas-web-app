@@ -43,8 +43,9 @@ export const actions: Actions = {
 	delete: async (event) => {
 		const { staff, accountId } = await workspace(event, 'accounts.delete', { freshMfa: true });
 		const data = await event.request.formData();
+		let result;
 		try {
-			await deleteAccountCascade(
+			result = await deleteAccountCascade(
 				{ actor: auditActor(staff), ip: clientIp(event) },
 				accountId,
 				String(data.get('reason') ?? ''),
@@ -54,6 +55,6 @@ export const actions: Actions = {
 			if (e instanceof ActionError) return fail(e.status, { ok: false as const, error: e.message, deleteError: true as const });
 			throw e;
 		}
-		throw redirect(303, '/admin/accounts?deleted=1');
+		throw redirect(303, `/admin/accounts?deleted=1&sf=${result.salesforce.cleared}&sffail=${result.salesforce.failed.length}`);
 	}
 };
