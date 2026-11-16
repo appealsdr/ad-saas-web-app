@@ -22,10 +22,11 @@ import { getAccount, getAccountUser } from './accounts';
 import { setRequestAccount } from './request_context';
 import { updateSalesforceAccount } from '../salesforce/records';
 import { sendPasswordChangedEmail, sendPasswordResetEmail } from '../salesforce/email';
-import { logError } from '../error_log';
+import { logError, describeError } from '../error_log';
 import { hashPassword } from '../auth/password';
 import { generateTempPassword } from '../auth/temp_password';
 import { deleteObject } from '../storage/s3';
+import { clearSalesforceVuids, type VuidClearResult, type VuidTargets } from './sf_vuid_clear';
 
 export class ActionError extends Error {
 	constructor(
@@ -377,6 +378,8 @@ export interface DeleteAccountResult {
 	message: string;
 	deleted: Record<string, number>;
 	files: { attempted: number };
+	/** Result of nulling appealsdoctor_vuid__c on the related Salesforce records. */
+	salesforce: VuidClearResult;
 }
 
 /**
@@ -385,8 +388,9 @@ export interface DeleteAccountResult {
  * store + case documents, service contracts + line items, chat messages,
  * SP-API OAuth states, contacts, error/activity log rows for the account or its
  * users, and cached Salesforce mirror rows. Stored document files are removed
- * from S3 best-effort after the database commit. Salesforce and Stripe are NOT
- * touched. The admin audit trail is intentionally preserved (append-only).
+ * from S3 best-effort after the database commit. Stripe is NOT touched; in
+ * Salesforce nothing is deleted, only `appealsdoctor_vuid__c` is set to null on
+ * the related records (best effort, after the commit, reported to the caller). The admin audit trail is intentionally preserved (append-only).
  * The caller must confirm by typing the account name.
  */
 export async function deleteAccountCascade(
@@ -410,6 +414,7 @@ export async function deleteAccountCascade(
 	}
 
 	let fileKeys: string[] = [];
+	let sfTargets: VuidTargets | null = null;
 	const deleted = await sql.begin(async (tx) => {
 		const users = await tx<{ id: string; email: string; sfdc_contact_id: string | null }[]>`
 			SELECT id, email, sfdc_contact_id FROM users WHERE account_id = ${accountId}
@@ -419,9 +424,25 @@ export async function deleteAccountCascade(
 			SELECT id, sfdc_store_id FROM stores WHERE account_id = ${accountId}
 		`;
 		const storeIds = stores.map((s) => s.id);
-		const contracts = await tx<{ sfdc_service_contract_id: string | null }[]>`
-			SELECT sfdc_service_contract_id FROM service_contracts WHERE account_id = ${accountId}
+		const contracts = await tx<{ id: string; sfdc_service_contract_id: string | null }[]>`
+			SELECT id, sfdc_service_contract_id FROM service_contracts WHERE account_id = ${accountId}
 		`;
+		const contacts = await tx<{ id: string; sfdc_contact_id: string | null }[]>`
+			SELECT id, sfdc_contact_id FROM account_contacts WHERE account_id = ${accountId}
+		`;
+		// Collected BEFORE the delete cascades; cleared in Salesforce after commit.
+		const nn = (a: (string | null)[]) => [...new Set(a.filter((v): v is string => !!v))];
+		sfTargets = {
+			accountId,
+			sfdcAccountId: account.sfdc_account_id,
+			known: {
+				Account: nn([account.sfdc_account_id]),
+				Contact: nn([...users.map((u) => u.sfdc_contact_id), ...contacts.map((c) => c.sfdc_contact_id)]),
+				Store__c: nn(stores.map((s) => s.sfdc_store_id)),
+				ServiceContract: nn(contracts.map((c) => c.sfdc_service_contract_id))
+			},
+			localIds: { Account: [accountId], Contact: [...userIds, ...contacts.map((c) => c.id)], Store__c: storeIds, ServiceContract: contracts.map((c) => c.id) }
+		};
 		// Uploads live in S3 under s3_key (store_documents also has a legacy storage_path).
 		const docs = storeIds.length
 			? await tx<{ k: string | null }[]>`
@@ -468,7 +489,7 @@ export async function deleteAccountCascade(
 				outcome: 'success',
 				reason: why,
 				ip: ctx.ip,
-				metadata: { accountName: account.name, sfdcAccountId: account.sfdc_account_id, userEmails: users.map((u) => u.email), counts }
+				metadata: { accountName: account.name, sfdcAccountId: account.sfdc_account_id, userEmails: users.map((u) => u.email), counts, salesforceVuidTargets: sfTargets ? Object.fromEntries(Object.entries(sfTargets.known).map(([k, v]) => [k, v])) : null }
 			},
 			tx
 		);
@@ -478,9 +499,33 @@ export async function deleteAccountCascade(
 	// Files last: the database is already consistent, so a failure here only
 	// leaves orphaned objects (deleteObject is best-effort).
 	await Promise.all(fileKeys.map((k) => deleteObject(k)));
+
+	// Salesforce last and best effort: never undoes or blocks the local delete.
+	let salesforce: VuidClearResult;
+	try {
+		salesforce = await clearSalesforceVuids(sfTargets!);
+	} catch (e) {
+		const msg = describeError(e).errorMessage;
+		await logError({ source: 'admin.account_delete', operation: 'sf_vuid_clear', errorMessage: msg, context: { deletedAccountId: accountId } });
+		salesforce = { attempted: 0, cleared: 0, failed: [{ object: 'all', id: '-', error: msg }], skipped: [], byObject: {} };
+	}
+	if (salesforce.attempted || salesforce.failed.length || salesforce.skipped.length) {
+		await recordAudit({
+			actor: ctx.actor,
+			action: 'account.delete.salesforce_vuid_cleared',
+			targetType: 'account',
+			targetId: accountId,
+			targetAccountId: null,
+			outcome: salesforce.failed.length ? 'failure' : 'success',
+			reason: why,
+			ip: ctx.ip,
+			metadata: { accountName: account.name, ...salesforce }
+		}).catch(() => undefined);
+	}
 	return {
 		message: `Account “${account.name}” and all related records were permanently deleted.`,
 		deleted,
-		files: { attempted: fileKeys.length }
+		files: { attempted: fileKeys.length },
+		salesforce
 	};
 }

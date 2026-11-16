@@ -11,7 +11,7 @@
 <svelte:head><title>Accounts — Admin</title></svelte:head>
 
 <h1 class="adm-h1">All accounts</h1>
-{#if $page.url.searchParams.get('deleted')}<div class="adm-alert ok" role="status">Account permanently deleted.</div>{/if}
+{#if $page.url.searchParams.get('deleted')}<div class="adm-alert ok" role="status">Account permanently deleted. Salesforce vuid cleared on {Number($page.url.searchParams.get('sf')) || 0} records, {Number($page.url.searchParams.get('sffail')) || 0} failed{Number($page.url.searchParams.get('sffail')) ? ' (see the audit log and error log for the failed records)' : ''}.</div>{/if}
 <p class="adm-sub">Every customer account, including incomplete, unlinked and ownerless ones. Dates are UTC.</p>
 
 <form method="GET" class="adm-card" role="search">

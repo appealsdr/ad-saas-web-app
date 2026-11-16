@@ -190,7 +190,7 @@
 		submitLabel={modal === 'create' ? 'Create in Salesforce' : 'Push current values'} on:close={() => (modal = null)} />
 {:else if modal === 'delete'}
 	<RecordModal kind="delete" title="Permanently delete account"
-		body="This deletes the account and all related records from the database (users, stores, documents, contracts, logs). Salesforce and Stripe are not touched. This cannot be undone."
+		body="This deletes the account and all related records from the database (users, stores, documents, contracts, logs). Nothing is deleted in Salesforce or Stripe; the Salesforce records just have their platform id (appealsdoctor_vuid__c) cleared. This cannot be undone."
 		recordName={a.name} recordId={a.id} action="?/delete" confirmText={a.name} submitLabel="Permanently delete account"
 		error={data.freshMfa ? null : 'Your last MFA verification was more than 5 minutes ago. For security you are being signed out — sign in again to continue.'}
 		on:close={() => (modal = null)} />
