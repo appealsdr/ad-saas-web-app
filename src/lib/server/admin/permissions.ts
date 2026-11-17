@@ -13,6 +13,7 @@ export type Permission =
 	| 'logs.read'
 	| 'data.read'
 	| 'data.query'
+	| 'data.write'
 	| 'staff.manage';
 
 export const PLATFORM_ROLES: PlatformRole[] = ['platform_admin', 'platform_viewer'];
@@ -27,6 +28,7 @@ const ROLE_PERMISSIONS: Record<PlatformRole, ReadonlySet<Permission>> = {
 		'logs.read',
 		'data.read',
 		'data.query',
+		'data.write',
 		'staff.manage'
 	]),
 	platform_viewer: new Set<Permission>(['accounts.read', 'users.read', 'logs.read', 'data.read'])

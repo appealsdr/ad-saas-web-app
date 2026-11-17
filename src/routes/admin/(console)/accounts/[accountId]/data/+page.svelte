@@ -1,8 +1,26 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
-	import type { PageData } from './$types';
+	import { enhance } from '$app/forms';
+	import type { ActionData, PageData } from './$types';
 	export let data: PageData;
+	export let form: ActionData;
+
+	// ── SQL console ────────────────────────────────────────────────────
+	let sqlOpen = false;
+	let sqlOp: 'insert' | 'update' | 'delete' = 'update';
+	let sqlText = '';
+	let sqlReason = '';
+	let sqlBusy = false;
+	$: sqlTable = data.table;
+	$: canSql = data.sqlConsole.enabled && (data.sqlConsole.writable as string[]).includes(sqlTable);
+	$: pv = form && 'preview' in form && form.preview && form.preview.sql === sqlText.trim().replace(/;\s*$/, '').trim() && form.preview.table === sqlTable && form.preview.op === sqlOp ? form.preview : null;
+	const TEMPLATES = {
+		insert: (t: string) => `INSERT INTO ${t} (col1, col2) VALUES ('value1', 'value2')`,
+		update: (t: string) => `UPDATE ${t} SET col1 = 'value' WHERE id = '<uuid>'`,
+		delete: (t: string) => `DELETE FROM ${t} WHERE id = '<uuid>'`
+	};
+	function useTemplate() { sqlText = TEMPLATES[sqlOp](sqlTable); }
 
 	type Col = { name: string; type: string; kind: 'text' | 'int' | 'bool' | 'date' };
 	type Cond = { id: number; col: string; op: string; val: string; val2: string };
@@ -149,6 +167,43 @@
 <svelte:window on:keydown={(e) => { if (e.key === 'Escape') { if (showFilters) showFilters = false; else closeRow(); } }} />
 
 <div class="adm-alert info"><span aria-hidden="true">ℹ</span> Rows below are linked to <strong>this account</strong> through the relationship shown for each table. Global or unrelated tables ({data.globalTables.join(', ')}) are only in the <a href="/admin/data">global data explorer</a>.</div>
+
+{#if data.sqlConsole.enabled}
+	<div class="adm-card sqlc">
+		<button type="button" class="adm-btn outline sm" on:click={() => (sqlOpen = !sqlOpen)}>{sqlOpen ? '▾' : '▸'} SQL console — insert / update / delete on <span class="adm-mono">{sqlTable}</span></button>
+		{#if sqlOpen}
+			{#if form && 'sqlOk' in form && form.sqlOk}<div class="adm-alert ok" role="status">{form.sqlOk}</div>{/if}
+			{#if form && 'sqlError' in form && form.sqlError}<div class="adm-alert error" role="alert">{form.sqlError}</div>{/if}
+			{#if !canSql}
+				<div class="adm-alert info">This table cannot be modified from the console. Writable: {data.sqlConsole.writable.join(', ')}.</div>
+			{:else}
+				<div class="adm-alert info"><span aria-hidden="true">⚠</span> Runs <strong>one</strong> statement against <span class="adm-mono">{sqlTable}</span>. It is not limited to this account, so include a precise <code>WHERE</code>. Preview runs it in a rolled-back transaction and shows the affected rows; Execute needs a reason and recent MFA, is limited to {data.sqlConsole.maxRows} rows, and is audited with the full statement.</div>
+				<form method="POST" use:enhance={() => { sqlBusy = true; return async ({ update }) => { await update({ reset: false }); sqlBusy = false; }; }}>
+					<input type="hidden" name="table" value={sqlTable} />
+					<input type="hidden" name="op" value={sqlOp} />
+					<div class="sqlrow">
+						{#each ['insert', 'update', 'delete'] as o}
+							<label class="opt"><input type="radio" bind:group={sqlOp} value={o} /> {o.toUpperCase()}</label>
+						{/each}
+						<button type="button" class="adm-btn outline sm" on:click={useTemplate}>Insert template</button>
+					</div>
+					<textarea name="sql" class="adm-input adm-mono" rows="4" spellcheck="false" placeholder={TEMPLATES[sqlOp](sqlTable)} bind:value={sqlText}></textarea>
+					<div class="sqlrow">
+						<button type="submit" class="adm-btn outline" formaction="?/sqlPreview" disabled={sqlBusy || !sqlText.trim()}>Preview (rolled back)</button>
+						{#if pv}<strong>Would affect {pv.rows} row(s).</strong>{/if}
+					</div>
+					{#if pv}
+						<input type="hidden" name="expectedRows" value={pv.rows} />
+						<label>Reason (required, 5–500 characters)
+							<input class="adm-input" name="reason" bind:value={sqlReason} minlength="5" maxlength="500" />
+						</label>
+						<button type="submit" class="adm-btn danger" formaction="?/sqlRun" disabled={sqlBusy || sqlReason.trim().length < 5}>Execute {sqlOp.toUpperCase()} ({pv.rows} rows)</button>
+					{/if}
+				</form>
+			{/if}
+		{/if}
+	</div>
+{/if}
 
 <div class="wrap">
 	<aside>
@@ -335,6 +390,10 @@
 {#if toast}<div class="toast">{toast}</div>{/if}
 
 <style>
+	.sqlc { margin-bottom: 12px; display: grid; gap: 10px; }
+	.sqlc textarea { width: 100%; }
+	.sqlrow { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin: 6px 0; }
+	.sqlc .opt { font-weight: 700; font-size: 12px; }
 	.wrap { display: grid; grid-template-columns: 260px minmax(0, 1fr); gap: 16px; align-items: start; }
 	aside:not(.drawer) { background: #fff; border: 1px solid var(--grey-line); border-radius: 12px; padding: 12px; display: flex; flex-direction: column; gap: 10px; position: sticky; top: 12px; max-height: calc(100vh - 40px); }
 	.aside-head { display: flex; align-items: center; justify-content: space-between; font-size: 13px; font-weight: 800; color: var(--navy); }
