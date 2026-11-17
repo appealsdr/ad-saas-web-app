@@ -1,4 +1,9 @@
-import type { PageServerLoad } from './$types';
+import { fail } from '@sveltejs/kit';
+import type { Actions, PageServerLoad } from './$types';
+import { roleHas } from '$lib/server/admin/permissions';
+import { auditActor, clientIp } from '$lib/server/admin/guard';
+import { ActionError } from '$lib/server/admin/actions';
+import { previewSql, executeSql, WRITABLE_TABLES, MAX_ROWS, type SqlOp } from '$lib/server/admin/data/sql_exec';
 import { workspace } from '$lib/server/admin/workspace';
 import { accountTableCounts, exploreAccountTable } from '$lib/server/admin/data/browse';
 import { INVENTORY } from '$lib/server/admin/data/inventory';
@@ -18,7 +23,7 @@ const GROUPS: Record<string, string> = {
 };
 
 export const load: PageServerLoad = async (event) => {
-	const { accountId } = await workspace(event, 'data.read');
+	const { accountId, staff } = await workspace(event, 'data.read');
 	const scoped = INVENTORY.filter((e) => e.view && e.accountScope);
 	const globalTables = INVENTORY.filter((e) => !e.accountScope).map((e) => e.name);
 	const sp = event.url.searchParams;
@@ -41,6 +46,37 @@ export const load: PageServerLoad = async (event) => {
 	return {
 		groups, tableCount: scoped.length, globalTables, table, result, page, pageSize: PAGE_SIZE,
 		query: { sort: sp.get('sort') ?? '', dir, q: search, conds, logic },
-		ops: OPS, noVal: NOVAL
+		ops: OPS, noVal: NOVAL,
+		sqlConsole: { enabled: roleHas(staff.role, 'data.write'), writable: [...WRITABLE_TABLES], maxRows: MAX_ROWS }
 	};
+};
+
+const op = (v: FormDataEntryValue | null): SqlOp => {
+	if (v === 'insert' || v === 'update' || v === 'delete') return v;
+	throw new ActionError('Choose insert, update or delete.', 400);
+};
+
+export const actions: Actions = {
+	sqlPreview: async (event) => {
+		await workspace(event, 'data.write');
+		const d = await event.request.formData();
+		try {
+			const r = await previewSql(op(d.get('op')), String(d.get('table') ?? ''), String(d.get('sql') ?? ''));
+			return { preview: { rows: r.rows, sql: r.stmt, op: String(d.get('op')), table: String(d.get('table')) } };
+		} catch (e) {
+			if (e instanceof ActionError) return fail(e.status, { sqlError: e.message });
+			throw e;
+		}
+	},
+	sqlRun: async (event) => {
+		const { staff, accountId } = await workspace(event, 'data.write', { freshMfa: true });
+		const d = await event.request.formData();
+		try {
+			const msg = await executeSql({ actor: auditActor(staff), ip: clientIp(event) }, accountId, op(d.get('op')), String(d.get('table') ?? ''), String(d.get('sql') ?? ''), Number(d.get('expectedRows')), String(d.get('reason') ?? ''));
+			return { sqlOk: msg };
+		} catch (e) {
+			if (e instanceof ActionError) return fail(e.status, { sqlError: e.message });
+			throw e;
+		}
+	}
 };
