@@ -9,13 +9,16 @@ import { auditActor, clientIp, isUuid } from '$lib/server/admin/guard';
 import { ActionError } from '$lib/server/admin/actions';
 import { deleteRecord } from '$lib/server/admin/records';
 import { salesforceUrl } from '$lib/server/admin/links';
+import { listSalesforceStores, importSalesforceStore } from '$lib/server/admin/sf_stores';
 
 export const load: PageServerLoad = async (event) => {
-	const { accountId, staff } = await workspace(event, 'accounts.read');
+	const { accountId, staff, account } = await workspace(event, 'accounts.read');
 	const stores = await listAccountStores(accountId);
 	const existing = await sfExisting('Store__c', stores.map((s) => s.sfdc_store_id));
 	return {
 		stores: await Promise.all(stores.map(async (s) => ({ ...s, sfState: sfState(s.sfdc_store_id, existing), sfUrl: await salesforceUrl('Store__c', s.sfdc_store_id) }))),
+		sfStores: await listSalesforceStores(accountId, account.sfdc_account_id),
+		sfdcAccountId: account.sfdc_account_id,
 		canEdit: roleHas(staff.role, 'accounts.update'),
 		canSync: roleHas(staff.role, 'accounts.update'),
 		canDelete: roleHas(staff.role, 'accounts.delete')
@@ -24,6 +27,16 @@ export const load: PageServerLoad = async (event) => {
 
 export const actions: Actions = {
 	resync: resyncAction,
+	importStore: async (event) => {
+		const { staff, accountId } = await workspace(event, 'accounts.update');
+		const d = await event.request.formData();
+		try {
+			return { ok: await importSalesforceStore({ actor: auditActor(staff), ip: clientIp(event) }, accountId, String(d.get('sfdcStoreId') ?? ''), String(d.get('reason') ?? '')) };
+		} catch (e) {
+			if (e instanceof ActionError) return fail(e.status, { error: e.message });
+			throw e;
+		}
+	},
 	delete: async (event) => {
 		const { staff, accountId } = await workspace(event, 'accounts.delete', { freshMfa: true });
 		const d = await event.request.formData();

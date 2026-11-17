@@ -18,6 +18,9 @@
 	let filter: (typeof FILTERS)[number][0] = 'all';
 	let search = '';
 	let modal: { kind: 'create' | 'sync' | 'delete'; store: Store } | null = null;
+	let tab: 'app' | 'sf' = 'app';
+	let importing: PageData['sfStores']['stores'] extends (infer T)[] | null ? T | null : never = null;
+	$: sfList = data.sfStores.stores ?? [];
 
 	$: base = `/admin/accounts/${$page.params.accountId}`;
 	const matches = (s: Store, f: string) => f === 'all' || (f === 'sf' ? s.sfState !== 'synced' : spKey(s) === f);
@@ -44,6 +47,41 @@
 {#if form && 'ok' in form && form.ok}<div class="adm-alert ok" role="status">{form.ok}</div>{/if}
 {#if form && 'error' in form && form.error && !modal}<div class="adm-alert error" role="alert">{form.error}</div>{/if}
 {#if $page.url.searchParams.get('deleted')}<div class="adm-alert ok" role="status">Record deleted.</div>{/if}
+{#if data.sfdcAccountId}
+	<div class="tabs" role="tablist">
+		<button type="button" role="tab" aria-selected={tab === 'app'} class:active={tab === 'app'} on:click={() => (tab = 'app')}>App stores <span>{data.stores.length}</span></button>
+		<button type="button" role="tab" aria-selected={tab === 'sf'} class:active={tab === 'sf'} on:click={() => (tab = 'sf')}>Salesforce stores <span>{data.sfStores.stores === null ? '?' : sfList.length}</span></button>
+	</div>
+{/if}
+
+{#if tab === 'sf' && data.sfdcAccountId}
+	<div class="adm-card">
+		<p class="adm-muted" style="margin-top:0">Stores that exist in Salesforce under this account’s Salesforce Account but are not on the platform yet. “Add to platform” links the existing Salesforce store; nothing is created or changed in Salesforce.{#if data.sfStores.alreadyLinked} {data.sfStores.alreadyLinked} other Salesforce store(s) are already on the platform.{/if}</p>
+		{#if data.sfStores.stores === null}
+			<div class="adm-alert error" role="alert">Salesforce could not be reached. Try again shortly.</div>
+		{:else if sfList.length === 0}
+			<div class="adm-empty">No Salesforce stores are waiting to be added.</div>
+		{:else}
+			<div class="adm-table-wrap">
+				<table class="adm-table">
+					<caption class="adm-sr">Salesforce stores not on the platform</caption>
+					<thead><tr><th scope="col">Store</th><th scope="col">Marketplaces</th><th scope="col">Seller ID</th><th scope="col">Created in Salesforce</th><th scope="col"></th></tr></thead>
+					<tbody>
+						{#each sfList as s (s.Id)}
+							<tr>
+								<td>{s.Name}<br /><span class="adm-mono adm-muted">{s.Id}</span></td>
+								<td>{#each (s.Marketplaces__c ?? '').split(';').filter(Boolean) as m}<span class="mp">{m}</span>{/each}<div class="adm-muted">{s.Country__c ?? ''}</div></td>
+								<td class="adm-mono">{s.Seller_ID__c ?? '—'}{#if s.sellerIdTaken}<div style="color:var(--red)">Seller ID already used on this account</div>{/if}</td>
+								<td>{fmt(s.CreatedDate)}</td>
+								<td><button type="button" class="adm-btn sm" disabled={!data.canSync || s.sellerIdTaken} title={data.canSync ? undefined : 'Your role is read-only'} on:click={() => (importing = s)}>Add to platform</button></td>
+							</tr>
+						{/each}
+					</tbody>
+				</table>
+			</div>
+		{/if}
+	</div>
+{:else}
 <div class="adm-alert info"><span aria-hidden="true">ℹ</span> Connection state below is what the app last <strong>persisted</strong> (status, timestamps, last error). It is not a live health check; a stored token or ID does not prove the connection works.</div>
 
 <div class="adm-card">
@@ -97,6 +135,24 @@
 	{/if}
 </div>
 
+{/if}
+
+{#if importing}
+	{@const i = importing}
+	<RecordModal
+		kind="sync"
+		title="Add Salesforce store to platform"
+		body="Creates a platform store linked to this existing Salesforce store, copying its name, marketplaces, seller ID and contact details. Nothing is created in Salesforce. Logged with your reason."
+		recordName={i.Name}
+		recordId={i.Id}
+		action="?/importStore"
+		hidden={{ sfdcStoreId: i.Id }}
+		confirmText={i.Name}
+		submitLabel="Add to platform"
+		on:close={() => (importing = null)}
+	/>
+{/if}
+
 {#if modal}
 	{@const m = modal}
 	<RecordModal
@@ -118,6 +174,10 @@
 {/if}
 
 <style>
+	.tabs { display: flex; gap: 4px; margin-bottom: 12px; border-bottom: 1px solid var(--grey-line); }
+	.tabs button { background: none; border: 0; border-bottom: 3px solid transparent; padding: 8px 14px; font: inherit; font-weight: 700; color: var(--navy); cursor: pointer; opacity: .65; }
+	.tabs button.active { border-bottom-color: var(--navy); opacity: 1; }
+	.tabs span { font-weight: 600; margin-left: 3px; }
 	.toolbar { display: flex; gap: 8px; margin-bottom: 12px; }
 	.search { flex: 1; }
 	.pillbar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 12px; }
