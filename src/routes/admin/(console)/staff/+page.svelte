@@ -34,6 +34,17 @@
 									<button class="adm-btn danger sm" type="submit">Deactivate</button>
 								</form>
 								{#if s.user_id !== data.me}
+									<form method="POST" action="?/set_role" use:enhance style="margin-top:8px">
+										<input type="hidden" name="email" value={s.email} />
+										<label class="adm-muted" for="r-{s.user_id}">Role</label>
+										<select id="r-{s.user_id}" name="role" class="adm-input">
+											<option value="platform_viewer" selected={s.role === 'platform_viewer'}>platform_viewer</option>
+											<option value="platform_admin" selected={s.role === 'platform_admin'}>platform_admin</option>
+										</select>
+										<label class="adm-muted" for="rr-{s.user_id}">Reason</label>
+										<input id="rr-{s.user_id}" name="reason" class="adm-input" required minlength="5" />
+										<button class="adm-btn outline sm" type="submit">Change role</button>
+									</form>
 									<form method="POST" action="?/set_password" use:enhance={() => async ({ update }) => { await update({ reset: true }); }} style="margin-top:8px">
 										<input type="hidden" name="userId" value={s.user_id} />
 										<input type="hidden" name="email" value={s.email} />

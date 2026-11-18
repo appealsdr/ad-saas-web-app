@@ -9,6 +9,7 @@
 <div class="adm-card" style="max-width:420px">
 	<h1 class="adm-h1">Confirm it’s you</h1>
 	<p class="adm-sub">This action needs a recent multi-factor check (within 5 minutes).</p>
+	{#if data.stale}<div class="adm-alert warn" role="status">Your last MFA check expired, so your change was not saved. Enter a code and you’ll return to where you were — then repeat the action.</div>{/if}
 	{#if form?.error}<div class="adm-alert error" role="alert">{form.error}</div>{/if}
 	<form method="POST" use:enhance>
 		<input type="hidden" name="next" value={data.next} />

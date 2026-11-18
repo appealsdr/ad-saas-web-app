@@ -41,6 +41,21 @@ export const actions: Actions = {
 			throw e;
 		}
 	},
+	set_role: async (event) => {
+		const staff = guard(event);
+		const d = await event.request.formData();
+		const role = String(d.get('role') ?? '');
+		if (!isPlatformRole(role)) return fail(400, { error: 'Unknown role.' });
+		const email = String(d.get('email') ?? '');
+		if (email.trim().toLowerCase() === staff.email.toLowerCase()) return fail(400, { error: 'You cannot change your own role.' });
+		try {
+			const r = await setStaffRole({ email, role, actor: auditActor(staff), reason: requireReason(String(d.get('reason') ?? '')), ip: clientIp(event) });
+			return { ok: r.changed ? `Role changed to ${role}. They were signed out everywhere.` : 'No change (already that role).' };
+		} catch (e) {
+			if (e instanceof StaffError || e instanceof ActionError) return fail(400, { error: e.message });
+			throw e;
+		}
+	},
 	set_password: async (event) => {
 		const staff = guard(event);
 		const d = await event.request.formData();
