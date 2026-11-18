@@ -1,8 +1,10 @@
 import { fail } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
 import { auditActor, clientIp, isUuid, requireStaff } from '$lib/server/admin/guard';
-import { StaffError, deactivateStaff, setStaffRole, listStaff, resetStaffMfa, setStaffPassword } from '$lib/server/admin/staff';
+import { StaffError, deactivateStaff, setStaffRole, listStaff, resetStaffMfa, setStaffPassword, createStaff, MIN_ADMIN_PASSWORD } from '$lib/server/admin/staff';
 import { isPlatformRole } from '$lib/server/admin/permissions';
+import { hashPassword } from '$lib/server/auth/password';
+import { generateTempPassword } from '$lib/server/auth/temp_password';
 import { requireReason, ActionError } from '$lib/server/admin/actions';
 
 export const load: PageServerLoad = async (event) => {
@@ -36,6 +38,24 @@ export const actions: Actions = {
 		try {
 			await deactivateStaff({ userId, actor: auditActor(staff), reason: requireReason(String(d.get('reason') ?? '')), ip: clientIp(event) });
 			return { ok: 'Staff member deactivated and signed out.' };
+		} catch (e) {
+			if (e instanceof StaffError || e instanceof ActionError) return fail(400, { error: e.message });
+			throw e;
+		}
+	},
+	create_admin: async (event) => {
+		const staff = guard(event);
+		const d = await event.request.formData();
+		const role = String(d.get('role') ?? '');
+		if (!isPlatformRole(role)) return fail(400, { error: 'Unknown role.' });
+		const email = String(d.get('email') ?? '').trim().toLowerCase();
+		const supplied = String(d.get('password') ?? '');
+		if (supplied && (supplied.length < MIN_ADMIN_PASSWORD || supplied.length > 200)) return fail(400, { error: `Password must be ${MIN_ADMIN_PASSWORD}–200 characters.` });
+		try {
+			requireReason(String(d.get('reason') ?? ''));
+			const password = supplied || generateTempPassword();
+			await createStaff({ email, displayName: String(d.get('name') ?? ''), role, passwordHash: await hashPassword(password), actor: auditActor(staff), ip: clientIp(event) });
+			return { ok: `Admin ${email} created. They enrol MFA at first sign-in at /admin/login.`, tempPassword: supplied ? null : password, tempFor: email };
 		} catch (e) {
 			if (e instanceof StaffError || e instanceof ActionError) return fail(400, { error: e.message });
 			throw e;

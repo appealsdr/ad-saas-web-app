@@ -85,7 +85,16 @@
 
 <div class="adm-card">
 	<h2>Create a new admin</h2>
-	<p class="adm-muted">Admin accounts are separate from customer users — they have their own password and MFA, and may use the same email as a customer. They are created from the operator console only, so no web request can mint one:</p>
-	<pre class="adm-pre">node --env-file=.env scripts/admin-cli.mjs create --email name@company.com --name "Full Name" --role platform_admin</pre>
-	<p class="adm-muted">You will be asked for the initial password (min 12 characters). They enrol MFA at first sign-in. For an existing admin, use <strong>Actions… → Set / Reset password</strong> in the table above.</p>
+	<p class="adm-muted">Admin accounts are separate from customer users — own password and MFA, and the email may match a customer's. They enrol MFA at first sign-in at /admin/login. Leave the password blank to generate a one-time temporary password.</p>
+	<form method="POST" action="?/create_admin" use:enhance={() => async ({ update }) => { await update({ reset: true }); }}>
+		<div class="adm-row">
+			<label>Email<input name="email" type="email" required /></label>
+			<label>Full name<input name="name" /></label>
+			<label>Role<select name="role"><option value="platform_viewer">platform_viewer</option><option value="platform_admin">platform_admin</option></select></label>
+			<label>Password (min 12, optional)<input name="password" type="password" minlength="12" maxlength="200" autocomplete="new-password" /></label>
+			<label>Reason<input name="reason" required minlength="5" /></label>
+			<button class="adm-btn" type="submit">Create admin</button>
+		</div>
+	</form>
+	<p class="adm-muted">The operator CLI (<code>scripts/admin-cli.mjs create</code>) still works for bootstrap and recovery. Role and password for an existing admin: <strong>Actions…</strong> on their row (not shown on your own row).</p>
 </div>
