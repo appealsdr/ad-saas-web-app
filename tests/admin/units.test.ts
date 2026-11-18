@@ -148,7 +148,11 @@ describe('requireStaff (fail closed)', () => {
 		expect(requireStaff(ev(ctx('platform_viewer')), 'data.read').role).toBe('platform_viewer');
 	});
 	it('stale MFA blocks membership changes', () => {
-		expect(thrown(() => requireStaff(ev(ctx('platform_admin', false), 'POST'), 'staff.manage', { freshMfa: true })).status).toBe(403);
+		expect(thrown(() => requireStaff(ev(ctx('platform_admin', false), 'POST'), 'staff.manage', { freshMfa: true })).status).toBe(403); // API/JSON call
+		const form = { locals: { staff: ctx('platform_admin', false) }, url: new URL('http://x/admin/staff?/set_password'), request: new Request('http://x', { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded', referer: 'http://x/admin/staff?q=1' } }) } as any;
+		const r = thrown(() => requireStaff(form, 'staff.manage', { freshMfa: true }));
+		expect(r.status).toBe(303);
+		expect(r.location).toBe('/admin/reauth?stale=1&next=%2Fadmin%2Fstaff%3Fq%3D1');
 		expect(thrown(() => requireStaff(ev(ctx('platform_admin', false)), 'staff.manage', { freshMfa: true })).location).toContain('/admin/reauth');
 		expect(requireStaff(ev(ctx('platform_admin', true)), 'staff.manage', { freshMfa: true }).role).toBe('platform_admin');
 	});

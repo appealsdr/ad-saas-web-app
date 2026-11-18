@@ -9,7 +9,7 @@ import { recordAudit } from '$lib/server/admin/audit';
 
 export const load: PageServerLoad = async (event) => {
 	requireStaff(event);
-	return { next: safeAdminNext(event.url.searchParams.get('next')) };
+	return { next: safeAdminNext(event.url.searchParams.get('next')), stale: event.url.searchParams.get('stale') === '1' };
 };
 
 export const actions: Actions = {

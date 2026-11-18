@@ -8,6 +8,8 @@ import { sql } from '../db';
 import { recordAudit, type AuditActor } from './audit';
 import { revokeAllAdminSessionsForUser } from './sessions';
 import { isPlatformRole, type PlatformRole } from './permissions';
+import { hashPassword } from '../auth/password';
+import { generateTempPassword } from '../auth/temp_password';
 
 export class StaffError extends Error {}
 
@@ -19,12 +21,13 @@ export interface StaffRow {
 	is_active: boolean;
 	created_at: Date;
 	mfa_enrolled: boolean;
+	has_password: boolean;
 }
 
 export async function listStaff(): Promise<StaffRow[]> {
 	return sql<StaffRow[]>`
 		SELECT ps.user_id, ps.email, ps.display_name, ps.role, ps.is_active, ps.created_at,
-		       (m.confirmed_at IS NOT NULL) AS mfa_enrolled
+		       (m.confirmed_at IS NOT NULL) AS mfa_enrolled, (ps.password_hash IS NOT NULL) AS has_password
 		FROM platform_staff ps
 		LEFT JOIN admin_mfa_credentials m ON m.user_id = ps.user_id
 		ORDER BY ps.is_active DESC, ps.email
@@ -153,4 +156,41 @@ export async function resetStaffMfa(args: { userId: string; actor: AuditActor; r
 			tx
 		);
 	});
+}
+
+export const MIN_ADMIN_PASSWORD = 12;
+
+/**
+ * Set or reset an admin's password (also the "setup" path for an admin that has no password yet).
+ * Either pass `password` (min 12 chars) or omit it to generate a one-time temporary password, returned ONCE.
+ * Clears must_reset_password (admins have no self-service change page, so a forced reset would lock them out)
+ * and signs the admin out everywhere. The password is never logged or audited.
+ */
+export async function setStaffPassword(args: {
+	userId: string;
+	password?: string | null;
+	actor: AuditActor;
+	reason: string;
+	ip?: string | null;
+}): Promise<{ generated: string | null }> {
+	if (args.userId === args.actor.userId) throw new StaffError('Use the operator CLI to change your own password.');
+	const supplied = args.password?.trim() ? args.password : null;
+	if (supplied && (supplied.length < MIN_ADMIN_PASSWORD || supplied.length > 200)) throw new StaffError(`Password must be ${MIN_ADMIN_PASSWORD}–200 characters.`);
+	const password = supplied ?? generateTempPassword();
+	const hash = await hashPassword(password);
+	await sql.begin(async (tx) => {
+		const [row] = await tx<{ password_hash: string | null; is_active: boolean }[]>`SELECT password_hash, is_active FROM platform_staff WHERE user_id = ${args.userId} FOR UPDATE`;
+		if (!row) throw new StaffError('That user is not platform staff.');
+		if (!row.is_active) throw new StaffError('That staff member is deactivated. Re-activate them first.');
+		await tx`UPDATE platform_staff SET password_hash = ${hash}, must_reset_password = false WHERE user_id = ${args.userId}`;
+		await revokeAllAdminSessionsForUser(args.userId, 'password_changed', args.actor.userId, tx as unknown as Sql);
+		await recordAudit(
+			{
+				actor: args.actor, action: row.password_hash ? 'staff.password_reset' : 'staff.password_set', targetType: 'user', targetId: args.userId,
+				outcome: 'success', reason: args.reason, ip: args.ip, metadata: { generated: !supplied }
+			},
+			tx
+		);
+	});
+	return { generated: supplied ? null : password };
 }

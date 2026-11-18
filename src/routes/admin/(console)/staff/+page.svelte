@@ -10,17 +10,20 @@
 <p class="adm-sub">Staff membership is separate from customer roles. Changes require MFA verified in the last 5 minutes.</p>
 {#if !data.fresh}<div class="adm-alert warn">Your MFA check is stale. <a href="/admin/reauth?next=/admin/staff">Re-verify</a> before making changes.</div>{/if}
 {#if form && 'ok' in form && form.ok}<div class="adm-alert ok" role="status">{form.ok}</div>{/if}
+{#if form && 'tempPassword' in form && form.tempPassword}
+	<div class="adm-alert warn" role="status">Temporary password for <strong>{form.tempFor}</strong> — shown <strong>once</strong>, copy it now and share it securely: <code class="adm-mono">{form.tempPassword}</code></div>
+{/if}
 {#if form && 'error' in form && form.error}<div class="adm-alert error" role="alert">{form.error}</div>{/if}
 
 <div class="adm-card">
 	<table class="adm-table">
 		<caption class="adm-sr">Staff</caption>
-		<thead><tr><th scope="col">Staff member</th><th scope="col">Role</th><th scope="col">State</th><th scope="col">MFA</th><th scope="col">Manage</th></tr></thead>
+		<thead><tr><th scope="col">Staff member</th><th scope="col">Role</th><th scope="col">State</th><th scope="col">Password</th><th scope="col">MFA</th><th scope="col">Manage</th></tr></thead>
 		<tbody>
 			{#each data.staff as s (s.user_id)}
 				<tr>
 					<td>{s.display_name ?? ''}<br /><span class="adm-muted">{s.email}</span></td>
-					<td>{s.role}</td><td>{s.is_active ? 'Active' : 'Deactivated'}</td><td>{s.mfa_enrolled ? 'Enrolled' : 'Not enrolled'}</td>
+					<td>{s.role}</td><td>{s.is_active ? 'Active' : 'Deactivated'}</td><td>{s.has_password ? 'Set' : 'Not set'}</td><td>{s.mfa_enrolled ? 'Enrolled' : 'Not enrolled'}</td>
 					<td>
 						{#if s.is_active}
 							<details><summary>Actions…</summary>
@@ -30,6 +33,28 @@
 									<input id="d-{s.user_id}" name="reason" class="adm-input" required minlength="5" />
 									<button class="adm-btn danger sm" type="submit">Deactivate</button>
 								</form>
+								{#if s.user_id !== data.me}
+									<form method="POST" action="?/set_role" use:enhance style="margin-top:8px">
+										<input type="hidden" name="email" value={s.email} />
+										<label class="adm-muted" for="r-{s.user_id}">Role</label>
+										<select id="r-{s.user_id}" name="role" class="adm-input">
+											<option value="platform_viewer" selected={s.role === 'platform_viewer'}>platform_viewer</option>
+											<option value="platform_admin" selected={s.role === 'platform_admin'}>platform_admin</option>
+										</select>
+										<label class="adm-muted" for="rr-{s.user_id}">Reason</label>
+										<input id="rr-{s.user_id}" name="reason" class="adm-input" required minlength="5" />
+										<button class="adm-btn outline sm" type="submit">Change role</button>
+									</form>
+									<form method="POST" action="?/set_password" use:enhance={() => async ({ update }) => { await update({ reset: true }); }} style="margin-top:8px">
+										<input type="hidden" name="userId" value={s.user_id} />
+										<input type="hidden" name="email" value={s.email} />
+										<label class="adm-muted" for="p-{s.user_id}">New password (min 12 — leave blank to generate one)</label>
+										<input id="p-{s.user_id}" name="password" type="password" class="adm-input" minlength="12" maxlength="200" autocomplete="new-password" />
+										<label class="adm-muted" for="pr-{s.user_id}">Reason</label>
+										<input id="pr-{s.user_id}" name="reason" class="adm-input" required minlength="5" />
+										<button class="adm-btn sm" type="submit">{s.has_password ? 'Reset password' : 'Set password'}</button>
+									</form>
+								{/if}
 								<form method="POST" action="?/reset_mfa" use:enhance style="margin-top:8px">
 									<input type="hidden" name="userId" value={s.user_id} />
 									<label class="adm-muted" for="m-{s.user_id}">Reason</label>
@@ -62,5 +87,5 @@
 	<h2>Create a new admin</h2>
 	<p class="adm-muted">Admin accounts are separate from customer users — they have their own password and MFA, and may use the same email as a customer. They are created from the operator console only, so no web request can mint one:</p>
 	<pre class="adm-pre">node --env-file=.env scripts/admin-cli.mjs create --email name@company.com --name "Full Name" --role platform_admin</pre>
-	<p class="adm-muted">You will be asked for the initial password (min 12 characters). They enrol MFA at first sign-in.</p>
+	<p class="adm-muted">You will be asked for the initial password (min 12 characters). They enrol MFA at first sign-in. For an existing admin, use <strong>Actions… → Set / Reset password</strong> in the table above.</p>
 </div>

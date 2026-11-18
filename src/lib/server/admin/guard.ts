@@ -17,6 +17,23 @@ export interface GuardOptions {
 	freshMfa?: boolean;
 }
 
+function isFormPost(event: Ev): boolean {
+	const ct = event.request.headers.get('content-type') ?? '';
+	return ct.startsWith('application/x-www-form-urlencoded') || ct.startsWith('multipart/form-data');
+}
+
+/** Same-origin page the form was submitted from (Referer), else the action's own path. */
+function returnPath(event: Ev): string {
+	try {
+		const ref = event.request.headers.get('referer');
+		if (ref) {
+			const u = new URL(ref);
+			if (u.origin === event.url.origin && u.pathname.startsWith('/admin')) return u.pathname + u.search;
+		}
+	} catch { /* fall through */ }
+	return event.url.pathname;
+}
+
 export function requireStaff(event: Ev, permission?: Permission, opts: GuardOptions = {}): StaffContext {
 	const staff = event.locals.staff;
 	const isRead = event.request.method === 'GET' || event.request.method === 'HEAD';
@@ -36,6 +53,8 @@ export function requireStaff(event: Ev, permission?: Permission, opts: GuardOpti
 			const next = encodeURIComponent(event.url.pathname + event.url.search);
 			throw redirect(303, `/admin/reauth?next=${next}`);
 		}
+		// A browser form post (not a JSON/API call): send them to re-verify, then back to the page they were on.
+		if (isFormPost(event)) throw redirect(303, `/admin/reauth?stale=1&next=${encodeURIComponent(returnPath(event))}`);
 		throw error(403, 'Recent MFA verification required. Re-verify at /admin/reauth and retry.');
 	}
 	return staff;
