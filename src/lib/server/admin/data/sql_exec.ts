@@ -94,12 +94,12 @@ export async function previewSql(op: SqlOp, table: string, raw: string): Promise
 }
 
 export async function executeSql(
-	ctx: { actor: AuditActor; ip?: string | null }, accountId: string, op: SqlOp, table: string, raw: string, expectedRows: number, reason: string
+	ctx: { actor: AuditActor; ip?: string | null }, accountId: string | null, op: SqlOp, table: string, raw: string, expectedRows: number, reason: string
 ): Promise<string> {
 	const why = requireReason(reason);
 	const stmt = validateSql(op, table, raw);
 	const rows = await runInTx(stmt, true, expectedRows, {
-		actor: ctx.actor, action: 'data.sql_execute', targetType: table, targetAccountId: accountId,
+		actor: ctx.actor, action: 'data.sql_execute', targetType: table, targetAccountId: accountId ?? undefined,
 		outcome: 'success', reason: why, ip: ctx.ip, metadata: { op, table, sql: stmt }
 	});
 	return `${op.toUpperCase()} on ${table} committed: ${rows} row(s) affected.`;

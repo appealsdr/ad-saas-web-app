@@ -1,7 +1,23 @@
 <script lang="ts">
 	import TableGrid from '$lib/components/admin/TableGrid.svelte';
-	import type { PageData } from './$types';
+	import { enhance } from '$app/forms';
+	import type { ActionData, PageData } from './$types';
 	export let data: PageData;
+	export let form: ActionData;
+
+	// ── Write SQL (insert / update / delete) ───────────────────────────
+	let wOp: 'insert' | 'update' | 'delete' = 'update';
+	let wSql = '';
+	let wReason = '';
+	let wBusy = false;
+	$: wTable = data.table;
+	$: wCan = data.sqlConsole.enabled && data.sqlConsole.writable.includes(wTable);
+	$: pv = form && 'preview' in form && form.preview && form.preview.sql === wSql.trim().replace(/;\s*$/, '').trim() && form.preview.table === wTable && form.preview.op === wOp ? form.preview : null;
+	const TPL = {
+		insert: (t: string) => `INSERT INTO ${t} (col1, col2) VALUES ('value1', 'value2')`,
+		update: (t: string) => `UPDATE ${t} SET col1 = 'value' WHERE id = '<uuid>'`,
+		delete: (t: string) => `DELETE FROM ${t} WHERE id = '<uuid>'`
+	};
 
 	let query = 'SELECT a.name, count(u.id) AS users\nFROM accounts a\nLEFT JOIN users u ON u.account_id = a.id\nGROUP BY a.name\nORDER BY users DESC\nLIMIT 50';
 	let maxRows = 500;
@@ -105,5 +121,38 @@
 				{/if}
 			{/if}
 		</div>
+
+		{#if data.sqlConsole.enabled}
+			<div class="adm-card">
+				<h2>Write SQL <span class="adm-muted" style="font-size:12px">· insert / update / delete · <span class="adm-mono">{wTable}</span></span></h2>
+				{#if form && 'sqlOk' in form && form.sqlOk}<div class="adm-alert ok" role="status">{form.sqlOk}</div>{/if}
+				{#if form && 'sqlError' in form && form.sqlError}<div class="adm-alert error" role="alert">{form.sqlError}</div>{/if}
+				{#if !wCan}
+					<div class="adm-alert info">The selected table cannot be modified here. Select one of: {data.sqlConsole.writable.join(', ')}.</div>
+				{:else}
+					<div class="adm-alert warn">Runs <strong>one</strong> statement against <span class="adm-mono">{wTable}</span> for <strong>all customers</strong> — include a precise <code>WHERE</code>. Preview runs it in a rolled-back transaction and shows the affected rows. Execute needs a reason and recent MFA, is limited to {data.sqlConsole.maxRows} rows and is audited with the full statement.</div>
+					<form method="POST" use:enhance={() => { wBusy = true; return async ({ update }) => { await update({ reset: false }); wBusy = false; }; }}>
+						<input type="hidden" name="table" value={wTable} />
+						<input type="hidden" name="op" value={wOp} />
+						<div class="adm-row">
+							{#each ['insert', 'update', 'delete'] as o}<label><input type="radio" bind:group={wOp} value={o} /> {o.toUpperCase()}</label>{/each}
+							<button type="button" class="adm-btn" on:click={() => (wSql = TPL[wOp](wTable))}>Insert template</button>
+						</div>
+						<textarea name="sql" class="adm-textarea" rows="4" spellcheck="false" placeholder={TPL[wOp](wTable)} bind:value={wSql}></textarea>
+						<div class="adm-row" style="margin-top:8px">
+							<button class="adm-btn" type="submit" formaction="?/sqlPreview" disabled={wBusy || !wSql.trim()}>Preview (rolled back)</button>
+							{#if pv}<strong>Would affect {pv.rows} row(s).</strong>{/if}
+						</div>
+						{#if pv}
+							<input type="hidden" name="expectedRows" value={pv.rows} />
+							<label style="display:block;margin-top:8px">Reason (required, 5–500 characters)
+								<input class="adm-input" name="reason" bind:value={wReason} minlength="5" maxlength="500" />
+							</label>
+							<button class="adm-btn" type="submit" formaction="?/sqlRun" style="margin-top:8px" disabled={wBusy || wReason.trim().length < 5}>Execute {wOp.toUpperCase()} ({pv.rows} rows)</button>
+						{/if}
+					</form>
+				{/if}
+			</div>
+		{/if}
 	</div>
 </div>
