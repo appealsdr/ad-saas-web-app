@@ -19,7 +19,7 @@
 		const s = document.createElement('script');
 		s.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
 		s.async = true;
-		s.onload = () => (window as unknown as { turnstile: { render: (el: HTMLElement, o: object) => void } }).turnstile.render(turnstileEl, { sitekey: data.turnstileSiteKey });
+		s.onload = () => (window as unknown as { turnstile: { render: (el: HTMLElement, o: object) => void } }).turnstile.render(turnstileEl, { sitekey: data.turnstileSiteKey, action: 'signup' });
 		document.head.appendChild(s);
 	});
 	const resetTurnstile = () => {
