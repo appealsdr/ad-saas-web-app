@@ -108,6 +108,14 @@
 			<li>Set a starting <strong>password</strong> (at least 8 characters), repeat it, and click <strong>Add Team Member</strong>.</li>
 			<li>Share the email and password with them. They can sign in right away at the sign-in screen and change nothing else to get started.</li>
 		</ol>
+		<figure class="shot">
+			<img src="/help/team-panel.jpg" alt="The Accounts page with the Account Team panel and the + Add Team Member button at the bottom right" loading="lazy" />
+			<figcaption>Step 1–2: the Account Team panel, with <strong>+ Add Team Member</strong> at the bottom right.</figcaption>
+		</figure>
+		<figure class="shot">
+			<img src="/help/team-add-form.jpg" alt="The Add Team Member form with name, email, phone, title and password fields filled in with sample details" loading="lazy" />
+			<figcaption>Step 3–4: fill in the form and click <strong>Add Team Member</strong>. (Sample details shown.)</figcaption>
+		</figure>
 		<p>To change someone later, click them in the Account Team list to edit their details, set the <strong>Point of Contact</strong> (shown with a ★), or remove them. Only the owner and admins see these options.</p>
 		<div class="note">
 			Need a separate login for someone? Add them as a team member here instead of creating a second account — that keeps all your stores, cases and payments in one place.
