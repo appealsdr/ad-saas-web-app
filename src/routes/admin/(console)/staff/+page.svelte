@@ -1,19 +1,54 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
+	import type { SubmitFunction } from '@sveltejs/kit';
 	import type { ActionData, PageData } from './$types';
 	export let data: PageData;
 	export let form: ActionData;
+
+	type Member = PageData['staff'][number];
+	type Tab = 'role' | 'password' | 'mfa' | 'deactivate';
+
+	let modal: { kind: 'create' } | { kind: 'manage'; s: Member } | null = null;
+	let tab: Tab = 'role';
+	let busy = false;
+	$: modalOpen = modal !== null;
+	$: isSelf = modal?.kind === 'manage' && modal.s.user_id === data.me;
+	$: tabs = ([['role', 'Role'], ['password', 'Password'], ['mfa', 'MFA'], ['deactivate', 'Deactivate']] as [Tab, string][]).filter(([t]) => !isSelf || t === 'mfa' || t === 'deactivate');
+
+	function manage(s: Member) {
+		modal = { kind: 'manage', s };
+		tab = s.user_id === data.me ? 'mfa' : 'role';
+	}
+	const close = () => (modal = null);
+
+	// Close the dialog only when the action succeeded; on a validation error keep it open and show the message inside.
+	const submit: SubmitFunction = () => {
+		busy = true;
+		return async ({ result, update }) => {
+			await update({ reset: result.type === 'success' });
+			busy = false;
+			if (result.type === 'success') close();
+		};
+	};
 </script>
 
 <svelte:head><title>Staff — Admin</title></svelte:head>
-<h1 class="adm-h1">Platform staff</h1>
-<p class="adm-sub">Staff membership is separate from customer roles. Changes require MFA verified in the last 5 minutes.</p>
+<svelte:window on:keydown={(e) => e.key === 'Escape' && modalOpen && close()} />
+
+<div class="head">
+	<div>
+		<h1 class="adm-h1">Platform staff</h1>
+		<p class="adm-sub">Staff membership is separate from customer roles. Changes require MFA verified in the last 5 minutes.</p>
+	</div>
+	<button type="button" class="adm-btn" on:click={() => (modal = { kind: 'create' })}>+ Create admin</button>
+</div>
+
 {#if !data.fresh}<div class="adm-alert warn">Your MFA check is stale. <a href="/admin/reauth?next=/admin/staff">Re-verify</a> before making changes.</div>{/if}
 {#if form && 'ok' in form && form.ok}<div class="adm-alert ok" role="status">{form.ok}</div>{/if}
 {#if form && 'tempPassword' in form && form.tempPassword}
 	<div class="adm-alert warn" role="status">Temporary password for <strong>{form.tempFor}</strong> — shown <strong>once</strong>, copy it now and share it securely: <code class="adm-mono">{form.tempPassword}</code></div>
 {/if}
-{#if form && 'error' in form && form.error}<div class="adm-alert error" role="alert">{form.error}</div>{/if}
+{#if form && 'error' in form && form.error && !modalOpen}<div class="adm-alert error" role="alert">{form.error}</div>{/if}
 
 <div class="adm-card">
 	<table class="adm-table">
@@ -24,77 +59,115 @@
 				<tr>
 					<td>{s.display_name ?? ''}<br /><span class="adm-muted">{s.email}</span></td>
 					<td>{s.role}</td><td>{s.is_active ? 'Active' : 'Deactivated'}</td><td>{s.has_password ? 'Set' : 'Not set'}</td><td>{s.mfa_enrolled ? 'Enrolled' : 'Not enrolled'}</td>
-					<td>
-						{#if s.is_active}
-							<details><summary>Actions…</summary>
-								<form method="POST" action="?/deactivate" use:enhance style="margin-top:8px">
-									<input type="hidden" name="userId" value={s.user_id} />
-									<label class="adm-muted" for="d-{s.user_id}">Reason</label>
-									<input id="d-{s.user_id}" name="reason" class="adm-input" required minlength="5" />
-									<button class="adm-btn danger sm" type="submit">Deactivate</button>
-								</form>
-								{#if s.user_id !== data.me}
-									<form method="POST" action="?/set_role" use:enhance style="margin-top:8px">
-										<input type="hidden" name="email" value={s.email} />
-										<label class="adm-muted" for="r-{s.user_id}">Role</label>
-										<select id="r-{s.user_id}" name="role" class="adm-input">
-											<option value="platform_viewer" selected={s.role === 'platform_viewer'}>platform_viewer</option>
-											<option value="platform_admin" selected={s.role === 'platform_admin'}>platform_admin</option>
-										</select>
-										<label class="adm-muted" for="rr-{s.user_id}">Reason</label>
-										<input id="rr-{s.user_id}" name="reason" class="adm-input" required minlength="5" />
-										<button class="adm-btn outline sm" type="submit">Change role</button>
-									</form>
-									<form method="POST" action="?/set_password" use:enhance={() => async ({ update }) => { await update({ reset: true }); }} style="margin-top:8px">
-										<input type="hidden" name="userId" value={s.user_id} />
-										<input type="hidden" name="email" value={s.email} />
-										<label class="adm-muted" for="p-{s.user_id}">New password (min 12 — leave blank to generate one)</label>
-										<input id="p-{s.user_id}" name="password" type="password" class="adm-input" minlength="12" maxlength="200" autocomplete="new-password" />
-										<label class="adm-muted" for="pr-{s.user_id}">Reason</label>
-										<input id="pr-{s.user_id}" name="reason" class="adm-input" required minlength="5" />
-										<button class="adm-btn sm" type="submit">{s.has_password ? 'Reset password' : 'Set password'}</button>
-									</form>
-								{/if}
-								<form method="POST" action="?/reset_mfa" use:enhance style="margin-top:8px">
-									<input type="hidden" name="userId" value={s.user_id} />
-									<label class="adm-muted" for="m-{s.user_id}">Reason</label>
-									<input id="m-{s.user_id}" name="reason" class="adm-input" required minlength="5" />
-									<button class="adm-btn outline sm" type="submit">Reset MFA</button>
-								</form>
-							</details>
-						{/if}
-					</td>
+					<td>{#if s.is_active}<button type="button" class="adm-btn outline sm" on:click={() => manage(s)}>Manage…</button>{/if}</td>
 				</tr>
 			{/each}
 		</tbody>
 	</table>
 </div>
 
-<div class="adm-card">
-	<h2>Change role</h2>
-	<p class="adm-muted">Applies to an existing platform admin (exact email). Role changes sign them out everywhere.</p>
-	<form method="POST" action="?/grant" use:enhance>
-		<div class="adm-row">
-			<label>Email<input name="email" type="email" required /></label>
-			<label>Role<select name="role"><option value="platform_viewer">platform_viewer</option><option value="platform_admin">platform_admin</option></select></label>
-			<label>Reason<input name="reason" required minlength="5" /></label>
-			<button class="adm-btn" type="submit">Save</button>
-		</div>
-	</form>
-</div>
+<p class="adm-muted">The operator CLI (<code>scripts/admin-cli.mjs</code>) still works for bootstrap and recovery.</p>
 
-<div class="adm-card">
-	<h2>Create a new admin</h2>
-	<p class="adm-muted">Admin accounts are separate from customer users — own password and MFA, and the email may match a customer's. They enrol MFA at first sign-in at /admin/login. Leave the password blank to generate a one-time temporary password.</p>
-	<form method="POST" action="?/create_admin" use:enhance={() => async ({ update }) => { await update({ reset: true }); }}>
-		<div class="adm-row">
-			<label>Email<input name="email" type="email" required /></label>
-			<label>Full name<input name="name" /></label>
-			<label>Role<select name="role"><option value="platform_viewer">platform_viewer</option><option value="platform_admin">platform_admin</option></select></label>
-			<label>Password (min 12, optional)<input name="password" type="password" minlength="12" maxlength="200" autocomplete="new-password" /></label>
-			<label>Reason<input name="reason" required minlength="5" /></label>
-			<button class="adm-btn" type="submit">Create admin</button>
+{#if modal}
+	<div class="backdrop" role="presentation" on:click={close}>
+		<div class="modal" role="dialog" aria-modal="true" aria-label={modal.kind === 'create' ? 'Create admin' : 'Manage admin'} tabindex="-1" on:click|stopPropagation on:keydown|stopPropagation>
+			<header>
+				<h3>{modal.kind === 'create' ? 'Create a new admin' : 'Manage admin'}</h3>
+				<button type="button" class="x" aria-label="Close" on:click={close}>✕</button>
+			</header>
+
+			{#if modal.kind === 'create'}
+				<form method="POST" action="?/create_admin" use:enhance={submit}>
+					<div class="body">
+						<p class="lead">Admin accounts are separate from customer users — own password and MFA, and the email may match a customer's. They enrol MFA at first sign-in at /admin/login. Leave the password blank to generate a one-time temporary password.</p>
+						{#if form && 'error' in form && form.error}<div class="adm-alert error" role="alert">{form.error}</div>{/if}
+						<div class="grid">
+							<label>Email *<input class="adm-input" name="email" type="email" required /></label>
+							<label>Full name<input class="adm-input" name="name" /></label>
+							<label>Role *<select class="adm-input" name="role"><option value="platform_viewer">platform_viewer</option><option value="platform_admin">platform_admin</option></select></label>
+							<label>Password (min 12, optional)<input class="adm-input" name="password" type="password" minlength="12" maxlength="200" autocomplete="new-password" /></label>
+							<label class="full">Reason * (5–500 characters)<input class="adm-input" name="reason" required minlength="5" maxlength="500" /></label>
+						</div>
+					</div>
+					<footer>
+						<button type="button" class="adm-btn outline" on:click={close}>Cancel</button>
+						<button type="submit" class="adm-btn" disabled={busy}>{busy ? 'Working…' : 'Create admin'}</button>
+					</footer>
+				</form>
+			{:else}
+				{@const s = modal.s}
+				<div class="who"><strong>{s.display_name ?? s.email}</strong><span class="adm-muted">{s.email} · {s.role}</span></div>
+				<nav class="tabs" role="tablist">
+					{#each tabs as [t, label]}
+						<button type="button" role="tab" aria-selected={tab === t} class:active={tab === t} on:click={() => (tab = t)}>{label}</button>
+					{/each}
+				</nav>
+				{#if form && 'error' in form && form.error}<div class="adm-alert error" role="alert" style="margin:12px 18px 0">{form.error}</div>{/if}
+
+				{#if tab === 'role' && !isSelf}
+					<form method="POST" action="?/set_role" use:enhance={submit}>
+						<div class="body">
+							<p class="lead">Changes this admin's permissions and signs them out everywhere.</p>
+							<input type="hidden" name="email" value={s.email} />
+							<label>Role<select class="adm-input" name="role">
+								<option value="platform_viewer" selected={s.role === 'platform_viewer'}>platform_viewer</option>
+								<option value="platform_admin" selected={s.role === 'platform_admin'}>platform_admin</option>
+							</select></label>
+							<label>Reason * (5–500 characters)<input class="adm-input" name="reason" required minlength="5" maxlength="500" /></label>
+						</div>
+						<footer><button type="button" class="adm-btn outline" on:click={close}>Cancel</button><button type="submit" class="adm-btn" disabled={busy}>{busy ? 'Working…' : 'Change role'}</button></footer>
+					</form>
+				{:else if tab === 'password' && !isSelf}
+					<form method="POST" action="?/set_password" use:enhance={submit}>
+						<div class="body">
+							<p class="lead">{s.has_password ? 'Resets' : 'Sets'} the password and signs this admin out everywhere. Leave blank to generate a one-time temporary password (shown once).</p>
+							<input type="hidden" name="userId" value={s.user_id} />
+							<input type="hidden" name="email" value={s.email} />
+							<label>New password (min 12, optional)<input class="adm-input" name="password" type="password" minlength="12" maxlength="200" autocomplete="new-password" /></label>
+							<label>Reason * (5–500 characters)<input class="adm-input" name="reason" required minlength="5" maxlength="500" /></label>
+						</div>
+						<footer><button type="button" class="adm-btn outline" on:click={close}>Cancel</button><button type="submit" class="adm-btn" disabled={busy}>{busy ? 'Working…' : s.has_password ? 'Reset password' : 'Set password'}</button></footer>
+					</form>
+				{:else if tab === 'mfa'}
+					<form method="POST" action="?/reset_mfa" use:enhance={submit}>
+						<div class="body">
+							<p class="lead">Removes their MFA credential and recovery codes and signs them out. They must enrol again at next sign-in.</p>
+							<input type="hidden" name="userId" value={s.user_id} />
+							<label>Reason * (5–500 characters)<input class="adm-input" name="reason" required minlength="5" maxlength="500" /></label>
+						</div>
+						<footer><button type="button" class="adm-btn outline" on:click={close}>Cancel</button><button type="submit" class="adm-btn" disabled={busy}>{busy ? 'Working…' : 'Reset MFA'}</button></footer>
+					</form>
+				{:else if tab === 'deactivate'}
+					<form method="POST" action="?/deactivate" use:enhance={submit}>
+						<div class="body">
+							<p class="lead">Deactivates this admin and signs them out. The last active platform admin cannot be deactivated.</p>
+							<input type="hidden" name="userId" value={s.user_id} />
+							<label>Reason * (5–500 characters)<input class="adm-input" name="reason" required minlength="5" maxlength="500" /></label>
+						</div>
+						<footer><button type="button" class="adm-btn outline" on:click={close}>Cancel</button><button type="submit" class="adm-btn danger" disabled={busy}>{busy ? 'Working…' : 'Deactivate'}</button></footer>
+					</form>
+				{/if}
+			{/if}
 		</div>
-	</form>
-	<p class="adm-muted">The operator CLI (<code>scripts/admin-cli.mjs create</code>) still works for bootstrap and recovery. Role and password for an existing admin: <strong>Actions…</strong> on their row (not shown on your own row).</p>
-</div>
+	</div>
+{/if}
+
+<style>
+	.head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+	.backdrop { position: fixed; inset: 0; background: rgba(15,23,42,.55); z-index: 1300; display: flex; align-items: center; justify-content: center; padding: 24px; }
+	.modal { background: #fff; border-radius: 12px; width: min(560px, 100%); max-height: 88vh; display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 24px 80px rgba(0,0,0,.25); }
+	header { display: flex; align-items: center; justify-content: space-between; padding: 14px 18px; border-bottom: 1px solid var(--grey-line); }
+	h3 { margin: 0; font-size: 16px; font-weight: 800; color: var(--navy); }
+	.x { background: none; border: none; font-size: 16px; cursor: pointer; color: var(--grey-text); }
+	form { display: flex; flex-direction: column; min-height: 0; }
+	.body { padding: 18px; overflow: auto; display: flex; flex-direction: column; gap: 12px; }
+	.lead { margin: 0; font-size: 13px; color: var(--navy); }
+	.who { display: flex; flex-direction: column; background: #F6F8FB; padding: 10px 18px; }
+	.tabs { display: flex; gap: 4px; padding: 0 18px; border-bottom: 1px solid var(--grey-line); }
+	.tabs button { background: none; border: 0; border-bottom: 3px solid transparent; padding: 10px 12px; font: inherit; font-size: 13px; font-weight: 700; color: var(--navy); cursor: pointer; opacity: .65; }
+	.tabs button.active { border-bottom-color: var(--navy); opacity: 1; }
+	label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; font-weight: 700; color: var(--grey-text); }
+	.grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+	.grid .full { grid-column: 1 / -1; }
+	footer { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 18px; border-top: 1px solid var(--grey-line); }
+</style>
