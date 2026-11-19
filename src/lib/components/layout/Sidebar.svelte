@@ -38,6 +38,7 @@
 				aria-current={isActive(item.href) ? 'page' : undefined}
 			>
 				<img class="nav-icon" src={item.icon} alt="" aria-hidden="true" />
+				<span class="nav-label">{item.label}</span>
 			</a>
 		{/each}
 	</nav>
@@ -93,9 +94,11 @@
 
 	.nav-item {
 		display: flex;
+		flex-direction: column;
 		align-items: center;
 		justify-content: center;
-		padding: 12px 0;
+		gap: 5px;
+		padding: 11px 2px;
 		color: rgba(255,255,255,.55);
 		cursor: pointer;
 		border-left: 3px solid transparent;
@@ -118,6 +121,15 @@
 		height: 20px;
 		object-fit: contain;
 		flex-shrink: 0;
+	}
+
+	.nav-label {
+		font-size: 10px;
+		line-height: 1.15;
+		font-weight: 600;
+		text-align: center;
+		letter-spacing: .01em;
+		max-width: 100%;
 	}
 
 	.sidebar-footer {
