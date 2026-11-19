@@ -1,8 +1,10 @@
 <script lang="ts">
+	import { useAdminTime } from '$lib/admin/tz';
 	import type { PageData } from './$types';
 	import { page } from '$app/stores';
 	import RowMenu from '$lib/components/admin/RowMenu.svelte';
 	import FilePreviewModal from '$lib/components/files/FilePreviewModal.svelte';
+	const { fmt: fmtT, fmtDate: fmtD0 } = useAdminTime();
 	export let data: PageData;
 	const size = (b: string) => (Number(b) > 1048576 ? (Number(b) / 1048576).toFixed(1) + ' MB' : Math.ceil(Number(b) / 1024) + ' KB');
 	$: accountId = $page.params.accountId;
@@ -46,7 +48,7 @@
 				{#each list as d (d.kind + d.id)}
 					<tr>
 						<td><button type="button" class="namelink" title="Preview" on:click={() => preview(d)}>{d.original_name}</button></td><td>{d.kind}</td><td>{d.store_name}</td><td class="adm-mono">{d.sfdc_case_id ?? '—'}</td>
-						<td>{size(d.size_bytes)}</td><td>{new Date(d.created_at).toISOString().slice(0, 10)}</td>
+						<td>{size(d.size_bytes)}</td><td>{$fmtD0(d.created_at)}</td>
 						<td><RowMenu items={menu(d)} /></td>
 					</tr>
 				{/each}

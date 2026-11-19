@@ -1,10 +1,12 @@
 <script lang="ts">
 	import { page } from '$app/stores';
+	import { useAdminTime } from '$lib/admin/tz';
 	import type { PageData } from './$types';
 	export let data: PageData;
 	$: pages = Math.max(1, Math.ceil(data.total / data.pageSize));
 	const href = (p: number) => `/admin/accounts?${data.baseQuery ? data.baseQuery + '&' : ''}page=${p}`;
-	const fmt = (d: Date | string) => new Date(d).toISOString().slice(0, 10) + ' UTC';
+	const { fmt: fmtT, fmtDate: fmtD0, rel } = useAdminTime();
+	$: fmt = (d: Date | string) => $fmtD0(d);
 	$: ctx = encodeURIComponent(data.context);
 </script>
 
@@ -12,7 +14,7 @@
 
 <h1 class="adm-h1">All accounts</h1>
 {#if $page.url.searchParams.get('deleted')}<div class="adm-alert ok" role="status">Account permanently deleted. Salesforce vuid cleared on {Number($page.url.searchParams.get('sf')) || 0} records, {Number($page.url.searchParams.get('sffail')) || 0} failed{Number($page.url.searchParams.get('sffail')) ? ' (see the audit log and error log for the failed records)' : ''}.</div>{/if}
-<p class="adm-sub">Every customer account, including incomplete, unlinked and ownerless ones. Dates are UTC.</p>
+<p class="adm-sub">Every customer account, including incomplete, unlinked and ownerless ones. Dates are shown in your time zone.</p>
 
 <form method="GET" class="adm-card" role="search">
 	<div class="adm-row">
@@ -28,7 +30,7 @@
 		</label>
 		<label>Sort
 			<select name="sort">
-				{#each [['created', 'Created'], ['name', 'Name'], ['users', 'Users'], ['stores', 'Stores']] as [v, l]}
+				{#each [['created', 'Created'], ['name', 'Name'], ['users', 'Users'], ['stores', 'Stores'], ['activity', 'Last activity']] as [v, l]}
 					<option value={v} selected={data.query.sort === v}>{l}</option>
 				{/each}
 			</select>
@@ -59,7 +61,7 @@
 					<tr>
 						<th scope="col">Name</th><th scope="col">Local ID</th><th scope="col">Owner / contact</th>
 						<th scope="col">Users</th><th scope="col">Stores</th><th scope="col">Onboarding</th>
-						<th scope="col">Salesforce account</th><th scope="col">Created</th><th scope="col"><span class="adm-sr">Actions</span></th>
+						<th scope="col">Salesforce account</th><th scope="col">Last activity</th><th scope="col">Created</th><th scope="col"><span class="adm-sr">Actions</span></th>
 					</tr>
 				</thead>
 				<tbody>
@@ -76,6 +78,7 @@
 							<td>{a.store_count}</td>
 							<td>{a.onboarding_completed ? 'Complete' : 'Incomplete'}</td>
 							<td class="adm-mono">{a.sfdc_account_id ?? '—'}</td>
+							<td>{#if a.last_activity_at}<span title={$fmtT(a.last_activity_at, { seconds: true })}>{rel(a.last_activity_at)}</span>{:else}<span class="adm-muted">No activity</span>{/if}</td>
 							<td>{fmt(a.created_at)}</td>
 							<td><a class="adm-btn sm" href="/admin/accounts/{a.id}?from={ctx}">Open account</a></td>
 						</tr>

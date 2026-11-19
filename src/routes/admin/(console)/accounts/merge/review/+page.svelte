@@ -1,13 +1,15 @@
 <script lang="ts">
+	import { useAdminTime } from '$lib/admin/tz';
 	import { enhance } from '$app/forms';
 	import type { ActionData, PageData } from './$types';
+	const { fmt: fmtT, fmtDate: fmtD0 } = useAdminTime();
 	export let data: PageData;
 	export let form: ActionData;
 	let busy = false;
 	$: done = form && 'ok' in form && form.ok ? form.ok : null;
 	$: failed = form && 'error' in form ? form.error : null;
 	const money = (cents: string | number, cur: string) => new Intl.NumberFormat('en-US', { style: 'currency', currency: cur.toUpperCase() }).format(Number(cents) / 100);
-	const day = (d: Date | string) => new Date(d).toISOString().slice(0, 10);
+	$: day = (d: Date | string) => $fmtD0(d);
 </script>
 
 <svelte:head><title>Review merge — Admin</title></svelte:head>

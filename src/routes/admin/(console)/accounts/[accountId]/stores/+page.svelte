@@ -1,13 +1,15 @@
 <script lang="ts">
+	import { useAdminTime } from '$lib/admin/tz';
 	import { page } from '$app/stores';
 	import RowMenu from '$lib/components/admin/RowMenu.svelte';
 	import RecordModal from '$lib/components/admin/RecordModal.svelte';
 	import type { ActionData, PageData } from './$types';
+	const { fmt: fmtT, fmtDate: fmtD0 } = useAdminTime();
 	export let data: PageData;
 	export let form: ActionData;
 
 	type Store = PageData['stores'][number];
-	const fmt = (d: Date | string | null) => (d ? new Date(d).toISOString().replace('T', ' ').slice(0, 16) + ' UTC' : '');
+	$: fmt = (d: Date | string | null) => (d ? $fmtT(d) : '');
 	const SP: Record<string, [string, string, string]> = {
 		connected: ['Connected', '#DCFCE7', '#15803d'], disconnected: ['Disconnected', '#F1F5F9', '#475569'], error: ['Error', '#FEE2E2', '#b91c1c']
 	};

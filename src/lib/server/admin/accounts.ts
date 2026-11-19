@@ -13,7 +13,7 @@
 import { sql } from '../db';
 import { likeContains, parsePage, parsePageSize } from './pagination';
 
-export type AccountSort = 'created' | 'name' | 'users' | 'stores';
+export type AccountSort = 'created' | 'name' | 'users' | 'stores' | 'activity';
 
 export interface AccountListRow {
 	id: string;
@@ -26,6 +26,8 @@ export interface AccountListRow {
 	onboarding_completed: boolean;
 	sfdc_account_id: string | null;
 	created_at: Date;
+	/** Newest activity_log event for the account (same source as the App activity tab); null = no activity. */
+	last_activity_at: Date | null;
 }
 
 export interface AccountListQuery {
@@ -38,7 +40,7 @@ export interface AccountListQuery {
 }
 
 export function parseAccountListQuery(params: URLSearchParams): Required<AccountListQuery> {
-	const sort = (['created', 'name', 'users', 'stores'] as const).find((s) => s === params.get('sort')) ?? 'created';
+	const sort = (['created', 'name', 'users', 'stores', 'activity'] as const).find((s) => s === params.get('sort')) ?? 'created';
 	const onboarding = params.get('onboarding') === 'complete' ? 'complete' : params.get('onboarding') === 'incomplete' ? 'incomplete' : '';
 	return {
 		q: (params.get('q') ?? '').trim().slice(0, 200),
@@ -77,6 +79,8 @@ export async function listAccounts(query: Required<AccountListQuery>) {
 				? sql`ORDER BY user_count ${dir}, a.id`
 				: query.sort === 'stores'
 					? sql`ORDER BY store_count ${dir}, a.id`
+					: query.sort === 'activity'
+						? sql`ORDER BY la.last_activity_at ${dir} NULLS LAST, a.id` // accounts with no activity always sort last
 					: sql`ORDER BY a.created_at ${dir}, a.id`;
 
 	const offset = (query.page - 1) * query.pageSize;
@@ -85,8 +89,12 @@ export async function listAccounts(query: Required<AccountListQuery>) {
 		       o.email AS owner_email, o.display_name AS owner_name,
 		       (SELECT count(*) FROM users u WHERE u.account_id = a.id)::int AS user_count,
 		       (SELECT count(*) FROM stores s WHERE s.account_id = a.id)::int AS store_count,
-		       a.onboarding_completed, a.sfdc_account_id, a.created_at
+		       a.onboarding_completed, a.sfdc_account_id, a.created_at, la.last_activity_at
 		FROM accounts a
+		LEFT JOIN (
+			SELECT account_id, max(created_at) AS last_activity_at
+			FROM activity_log WHERE account_id IS NOT NULL GROUP BY account_id
+		) la ON la.account_id = a.id
 		LEFT JOIN LATERAL (
 			SELECT u.email, u.display_name FROM users u
 			WHERE u.account_id = a.id AND u.role = 'owner'

@@ -1,12 +1,14 @@
 <script lang="ts">
+	import { useAdminTime } from '$lib/admin/tz';
 	import { enhance } from '$app/forms';
 	import { page } from '$app/stores';
 	import RecordModal from '$lib/components/admin/RecordModal.svelte';
 	import type { ActionData, PageData } from './$types';
+	const { fmt: fmtT, fmtDate: fmtD0 } = useAdminTime();
 	export let data: PageData;
 	export let form: ActionData;
 
-	const fmt = (d: Date | string | null) => (d ? new Date(d).toISOString().replace('T', ' ').slice(0, 19) + ' UTC' : '—');
+	$: fmt = (d: Date | string | null) => (d ? $fmtT(d, { seconds: true }) : '—');
 	$: a = data.account;
 	const get = (k: string) => ((a as unknown as Record<string, string | null>)[k] ?? '');
 	async function copy(t: string) { try { await navigator.clipboard.writeText(t); } catch { /* needs user gesture */ } }

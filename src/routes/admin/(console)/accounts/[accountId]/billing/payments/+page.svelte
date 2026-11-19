@@ -1,7 +1,9 @@
 <script lang="ts">
+	import { useAdminTime } from '$lib/admin/tz';
 	import { page } from '$app/stores';
 	import RowMenu from '$lib/components/admin/RowMenu.svelte';
 	import type { PageData } from './$types';
+	const { fmt: fmtT, fmtDate: fmtD0 } = useAdminTime();
 	export let data: PageData;
 
 	type P = PageData['payments'][number];
@@ -17,7 +19,7 @@
 	$: base = `/admin/accounts/${$page.params.accountId}`;
 	$: totalPaid = data.payments.filter((p) => !p.isLine && p.status === 'paid').reduce((n, p) => n + p.amount, 0);
 	const money = (n: number) => '$' + n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-	const fmtD = (iso: string) => new Date(iso + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+	$: fmtD = (iso: string) => $fmtD0(iso);
 	const PAY = { paid: ['Paid', '#DCFCE7', '#15803d'], due: ['Due', '#FEF3C7', '#92400e'], failed: ['Failed', '#FEE2E2', '#b91c1c'], closed: ['Closed', '#F1F5F9', '#475569'], inactive: ['Not Active', '#F1F5F9', '#475569'], ready: ['Ready to pay', '#DBEAFE', '#1d4ed8'] } as const;
 	const menu = (p: P) => [
 		{ label: 'View', icon: '👁', href: `${base}/billing/payments/${encodeURIComponent(p.key)}` },
@@ -50,8 +52,8 @@
 					{@const st = PAY[p.status]}
 					<tr>
 						<td><a class="adm-mono" href="{base}/billing/payments/{encodeURIComponent(p.key)}" title="Open payment">{p.name}</a>{#if p.sfId}<div class="adm-mono adm-muted">{p.sfId}</div>{/if}</td>
-						<td><a class="adm-mono" href="{base}/records/contract/{p.contractId}">{p.contractRef}</a></td>
-						<td>{p.storeName ?? '—'}</td>
+						<td>{#if p.contractSource === 'app'}<a class="adm-mono" href="{base}/records/contract/{p.contractId}">{p.contractRef}</a>{:else}<span class="adm-mono" title="Contract exists in Salesforce only">{p.contractRef}</span>{/if}</td>
+						<td>{p.storeName ?? 'Account-wide'}</td>
 						<td>{p.kind}</td>
 						<td><strong>{money(p.amount)}</strong></td>
 						<td>{fmtD(p.date)}</td>

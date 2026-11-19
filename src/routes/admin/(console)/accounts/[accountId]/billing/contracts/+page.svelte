@@ -1,8 +1,10 @@
 <script lang="ts">
+	import { useAdminTime } from '$lib/admin/tz';
 	import { page } from '$app/stores';
 	import RowMenu from '$lib/components/admin/RowMenu.svelte';
 	import RecordModal from '$lib/components/admin/RecordModal.svelte';
 	import type { ActionData, PageData } from './$types';
+	const { fmt: fmtT, fmtDate: fmtD0 } = useAdminTime();
 	export let data: PageData;
 	export let form: ActionData;
 
@@ -25,11 +27,12 @@
 	$: totals = { amount: list.reduce((n, c) => n + c.amount, 0), paid: list.reduce((n, c) => n + c.payments.filter((p) => p.status === 'paid' && !p.isLine).reduce((a, p) => a + p.amount, 0), 0) };
 
 	const money = (n: number) => '$' + n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-	const fmtD = (iso: string | null) => (iso ? new Date(iso + (iso.length === 10 ? 'T00:00:00' : '')).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—');
+	$: fmtD = (iso: string | null) => (iso ? $fmtD0(iso) : '—');
 	const PAY = { paid: ['Paid', '#DCFCE7', '#15803d'], due: ['Due', '#FEF3C7', '#92400e'], failed: ['Failed', '#FEE2E2', '#b91c1c'], closed: ['Closed', '#F1F5F9', '#475569'], inactive: ['Not Active', '#F1F5F9', '#475569'], ready: ['Ready to pay', '#DBEAFE', '#1d4ed8'] } as const;
 	const SF = { synced: ['Synced', '#DCFCE7', '#15803d'], not_in_sf: ['Not in Salesforce', '#FEE2E2', '#b91c1c'], unknown: ['Unknown', '#FEF3C7', '#92400e'] } as const;
 	function toggle(id: string) { open.has(id) ? open.delete(id) : open.add(id); open = open; }
 	function menu(c: C) {
+		if (c.source === 'salesforce') return [{ label: 'View in Salesforce', icon: '↗', href: c.sfUrl ?? undefined, disabled: !c.sfUrl, title: c.sfUrl ? undefined : 'No linked Salesforce record' }];
 		return [
 			{ label: 'View', icon: '👁', href: `${base}/records/contract/${c.id}` },
 			{ label: 'Edit', icon: '✏️', href: `${base}/records/contract/${c.id}?edit=1` },
@@ -58,7 +61,7 @@
 		<span class="adm-muted foot">Showing {list.length} of {data.contracts.length} contracts · {money(totals.amount)} total · {money(totals.paid)} paid</span>
 	</div>
 	{#if list.length === 0}
-		<div class="adm-empty">{data.contracts.length === 0 ? 'This account has no contracts.' : 'No contracts match these filters.'}</div>
+		<div class="adm-empty">{data.contracts.length === 0 ? 'No contracts or payments yet for this account (in the app or in Salesforce).' : 'No contracts match these filters.'}</div>
 	{:else}
 		<div class="adm-table-wrap"><table class="adm-table">
 			<caption class="adm-sr">Contracts</caption>
@@ -70,8 +73,8 @@
 					{@const tops = c.payments.filter((p) => !p.isLine).length}
 					<tr>
 						<td><button type="button" class="chev" aria-expanded={open.has(c.id)} aria-label="Show services and payments" title="Show services and payments" on:click={() => toggle(c.id)}>{open.has(c.id) ? '▾' : '▸'}</button></td>
-						<td><a class="adm-mono" href="{base}/records/contract/{c.id}" title="Open contract">{c.ref}</a><div class="adm-muted">{c.kind === 'subscription' ? 'Subscription' : 'Services'}</div></td>
-						<td>{c.storeName ?? '—'}</td>
+						<td>{#if c.source === 'app'}<a class="adm-mono" href="{base}/records/contract/{c.id}" title="Open contract">{c.ref}</a>{:else}<span class="adm-mono">{c.ref}</span>{/if}<div class="adm-muted">{c.source === 'salesforce' ? 'Salesforce only' : c.kind === 'subscription' ? 'Subscription' : 'Services'}</div></td>
+						<td>{c.storeName ?? 'Account-wide'}</td>
 						<td>{c.status ?? '—'}<div class="adm-muted">{c.paymentStatus ?? ''}</div></td>
 						<td>{fmtD(c.startDate)} → {fmtD(c.endDate)}</td>
 						<td><strong>{money(c.amount)}</strong></td>

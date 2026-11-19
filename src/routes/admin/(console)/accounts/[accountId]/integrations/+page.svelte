@@ -1,10 +1,12 @@
 <script lang="ts">
+	import { useAdminTime } from '$lib/admin/tz';
 	import { enhance } from '$app/forms';
 	import type { ActionData, PageData } from './$types';
+	const { fmt: fmtT, fmtDate: fmtD0 } = useAdminTime();
 	export let data: PageData;
 	export let form: ActionData;
 	let busy = false;
-	const d = (v: Date | string | null) => (v ? new Date(v).toISOString().replace('T', ' ').slice(0, 16) + ' UTC' : '—');
+	$: d = (v: Date | string | null) => (v ? $fmtT(v) : '—');
 </script>
 
 <svelte:head><title>Integrations — Admin</title></svelte:head>

@@ -37,8 +37,9 @@ const rec = (over: Record<string, unknown> = {}) => ({
 	Description__c: 'Remaining balance for A-Z Claims — collect when its case is completed', Service_Contract__c: '810CONTRACT00001',
 	Contract_Line_Item__c: '811LINE000000001', Stripe_Payment_Intent_Id__c: null, ...over
 });
+// amount = price 30000 + pass-through fee 927
 const pi = (over: Record<string, unknown> = {}) => ({
-	id: 'pi_' + uniq(), status: 'succeeded', amount: 30000, created: 1790000000, payment_method: 'pm_1',
+	id: 'pi_' + uniq(), status: 'succeeded', amount: 30927, created: 1790000000, payment_method: 'pm_1',
 	metadata: { kind: 'balance', base_cents: '30000', fee_cents: '927', payment_id: PID, payment_name: 'PN-0075', account_id: 'acct' }, ...over
 }) as never;
 
@@ -99,7 +100,8 @@ d('completing the payment updates the same Payment__c, once', () => {
 	it('ignores non-balance or unsuccessful PaymentIntents and refuses an amount mismatch', async () => {
 		expect(await applyBalancePaid(pi({ metadata: { kind: 'service' } }))).toBe('ignored');
 		expect(await applyBalancePaid(pi({ status: 'requires_payment_method' }))).toBe('ignored');
-		const wrong = pi({ amount: 12345 });
+		// A charge whose price part (base_cents) does not equal the Salesforce record's amount is refused.
+		const wrong = pi({ amount: 12345, metadata: { kind: 'balance', base_cents: '12345', fee_cents: '0', payment_id: PID, payment_name: 'PN-0075', account_id: 'acct' } });
 		expect(await applyBalancePaid(wrong)).toBe('mismatch');
 		expect(m.updates).toHaveLength(0);
 	});

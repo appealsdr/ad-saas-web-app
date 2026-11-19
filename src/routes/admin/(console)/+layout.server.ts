@@ -7,7 +7,7 @@ import { roleHas } from '$lib/server/admin/permissions';
 export const load: LayoutServerLoad = async (event) => {
 	const staff = requireStaff(event);
 	return {
-		staff: { email: staff.email, displayName: staff.displayName, role: staff.role, freshMfa: staff.freshMfa },
+		staff: { email: staff.email, displayName: staff.displayName, role: staff.role, freshMfa: staff.freshMfa, timeZone: staff.timeZone },
 		can: {
 			data: roleHas(staff.role, 'data.read'),
 			query: roleHas(staff.role, 'data.query'),

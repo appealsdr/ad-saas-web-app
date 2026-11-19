@@ -1,7 +1,9 @@
 <script lang="ts">
+	import { useAdminTime } from '$lib/admin/tz';
 	import { page } from '$app/stores';
 	import RowMenu from '$lib/components/admin/RowMenu.svelte';
 	import type { PageData } from './$types';
+	const { fmt: fmtT, fmtDate: fmtD0 } = useAdminTime();
 	export let data: PageData;
 
 	type C = PageData['cases'][number];
@@ -17,7 +19,7 @@
 		return matches(c, filter) && (!q || [c.number, c.service, c.subject, c.storeName, c.status, c.priority].join(' ').toLowerCase().includes(q));
 	});
 	$: base = `/admin/accounts/${$page.params.accountId}`;
-	const fmtD = (iso: string) => new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+	$: fmtD = (iso: string) => $fmtD0(iso);
 	const chip = (s: string): [string, string] => (!isOpen(s) ? ['#DCFCE7', '#15803d'] : isWaiting(s) ? ['#FEE2E2', '#b91c1c'] : /progress|working/i.test(s) ? ['#DBEAFE', '#1d4ed8'] : ['#FFEDD5', '#c2410c']);
 	const menu = (c: C) => [
 		{ label: 'View', icon: '👁', href: `${base}/cases/${c.id}` },

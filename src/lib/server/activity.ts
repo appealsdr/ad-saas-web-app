@@ -4,6 +4,7 @@
  * One row per event, attributed to the signed-in user + account + session:
  *   login / logout   sign-in and sign-out
  *   page_view        a page the user opened   {path, from, title, msOnPrev}
+ *   page_time        VISIBLE time spent on a page (ms, capped at 30 min)  {path, ms}
  *   click            a link/button they used  {path, label, href}
  *   action           a change they submitted  {method, path, action, status}
  *
@@ -12,8 +13,8 @@
  */
 import { sql } from './db';
 
-export type ActivityType = 'login' | 'logout' | 'page_view' | 'click' | 'action';
-export const CLIENT_ACTIVITY_TYPES: ActivityType[] = ['page_view', 'click'];
+export type ActivityType = 'login' | 'logout' | 'page_view' | 'page_time' | 'click' | 'action';
+export const CLIENT_ACTIVITY_TYPES: ActivityType[] = ['page_view', 'page_time', 'click'];
 
 export interface ActivityInput {
 	userId: string;
@@ -26,6 +27,7 @@ export interface ActivityInput {
 	at?: Date;
 }
 
+export const MAX_PAGE_TIME_MS = 30 * 60_000;
 const clip = (v: unknown, n: number) => (typeof v === 'string' ? v.slice(0, n) : undefined);
 
 /** Path only — never a query string or fragment. */
@@ -69,6 +71,11 @@ export function shapeClientEvent(raw: unknown): { type: ActivityType; data: Reco
 				msOnPrev: typeof e.msOnPrev === 'number' && e.msOnPrev >= 0 && e.msOnPrev < 6 * 3600_000 ? Math.round(e.msOnPrev) : undefined
 			}
 		};
+	}
+	if (type === 'page_time') {
+		const ms = typeof e.ms === 'number' && Number.isFinite(e.ms) ? Math.round(e.ms) : 0;
+		if (ms < 1000 || ms > MAX_PAGE_TIME_MS) return null;
+		return { type, at, data: { path, ms } };
 	}
 	return { type, at, data: { path, label: clip(e.label, 80), href: cleanPath(e.href), kind: clip(e.kind, 20) } };
 }
