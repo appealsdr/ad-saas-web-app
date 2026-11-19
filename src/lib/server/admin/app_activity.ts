@@ -20,7 +20,7 @@ export function parseActivityQuery(accountId: string, p: URLSearchParams): Activ
 
 export async function appActivity(q: ActivityQuery) {
 	const since = new Date(Date.now() - q.days * 86_400_000);
-	const base = sql`a.account_id = ${q.accountId} AND a.created_at >= ${since} AND (${q.userId}::uuid IS NULL OR a.user_id = ${q.userId})`;
+	const base = sql`a.account_id = ${q.accountId} AND a.event_type <> 'page_time' AND a.created_at >= ${since} AND (${q.userId}::uuid IS NULL OR a.user_id = ${q.userId})`;
 
 	const [totals] = await sql<{ events: number; users: number; sessions: number; page_views: number; clicks: number; actions: number; logins: number; last_at: Date | null }[]>`
 		SELECT count(*)::int AS events, count(DISTINCT a.user_id)::int AS users, count(DISTINCT a.session_id)::int AS sessions,

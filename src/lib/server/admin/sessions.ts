@@ -72,15 +72,30 @@ interface SessionRow {
 
 export async function lookupAdminSession(rawToken: string | undefined): Promise<SessionLookup> {
 	if (!rawToken) return { status: 'none' };
-	const rows = await sql<SessionRow[]>`
-		SELECT s.id AS session_id, s.user_id, s.mfa_verified_at, s.last_activity_at,
-		       s.expires_at, s.revoked_at,
-		       ps.email, ps.display_name, ps.is_active AS staff_active, ps.role, ps.time_zone
-		FROM admin_sessions s
-		JOIN platform_staff ps ON ps.user_id = s.user_id
-		WHERE s.token_hash = ${sha256Hex(rawToken)}
-		LIMIT 1
-	`;
+	let rows: SessionRow[];
+	try {
+		rows = await sql<SessionRow[]>`
+			SELECT s.id AS session_id, s.user_id, s.mfa_verified_at, s.last_activity_at,
+			       s.expires_at, s.revoked_at,
+			       ps.email, ps.display_name, ps.is_active AS staff_active, ps.role, ps.time_zone
+			FROM admin_sessions s
+			JOIN platform_staff ps ON ps.user_id = s.user_id
+			WHERE s.token_hash = ${sha256Hex(rawToken)}
+			LIMIT 1
+		`;
+	} catch (e) {
+		// Rollout safety: migration 037 (platform_staff.time_zone) not applied yet → behave as "no saved time zone".
+		if ((e as { code?: string })?.code !== '42703') throw e;
+		rows = await sql<SessionRow[]>`
+			SELECT s.id AS session_id, s.user_id, s.mfa_verified_at, s.last_activity_at,
+			       s.expires_at, s.revoked_at,
+			       ps.email, ps.display_name, ps.is_active AS staff_active, ps.role, NULL::text AS time_zone
+			FROM admin_sessions s
+			JOIN platform_staff ps ON ps.user_id = s.user_id
+			WHERE s.token_hash = ${sha256Hex(rawToken)}
+			LIMIT 1
+		`;
+	}
 	const r = rows[0];
 	if (!r) return { status: 'none' };
 	if (r.revoked_at) return { status: 'revoked' };

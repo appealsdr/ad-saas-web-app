@@ -28,13 +28,24 @@ export interface StaffRow {
 }
 
 export async function listStaff(): Promise<StaffRow[]> {
-	return sql<StaffRow[]>`
-		SELECT ps.user_id, ps.email, ps.display_name, ps.role, ps.is_active, ps.created_at,
-		       (m.confirmed_at IS NOT NULL) AS mfa_enrolled, (ps.password_hash IS NOT NULL) AS has_password, ps.time_zone
-		FROM platform_staff ps
-		LEFT JOIN admin_mfa_credentials m ON m.user_id = ps.user_id
-		ORDER BY ps.is_active DESC, ps.email
-	`;
+	try {
+		return await sql<StaffRow[]>`
+			SELECT ps.user_id, ps.email, ps.display_name, ps.role, ps.is_active, ps.created_at,
+			       (m.confirmed_at IS NOT NULL) AS mfa_enrolled, (ps.password_hash IS NOT NULL) AS has_password, ps.time_zone
+			FROM platform_staff ps
+			LEFT JOIN admin_mfa_credentials m ON m.user_id = ps.user_id
+			ORDER BY ps.is_active DESC, ps.email
+		`;
+	} catch (e) {
+		if ((e as { code?: string })?.code !== '42703') throw e; // migration 037 not applied yet
+		return sql<StaffRow[]>`
+			SELECT ps.user_id, ps.email, ps.display_name, ps.role, ps.is_active, ps.created_at,
+			       (m.confirmed_at IS NOT NULL) AS mfa_enrolled, (ps.password_hash IS NOT NULL) AS has_password, NULL::text AS time_zone
+			FROM platform_staff ps
+			LEFT JOIN admin_mfa_credentials m ON m.user_id = ps.user_id
+			ORDER BY ps.is_active DESC, ps.email
+		`;
+	}
 }
 
 /**

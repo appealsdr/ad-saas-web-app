@@ -16,6 +16,7 @@
 	<header class="adm-top">
 		<span class="adm-brand">Appeals Doctor · Admin</span>
 		<nav aria-label="Admin" style="display:flex;gap:20px">
+			{#if data.can.logs}<a href="/admin/dashboard" aria-current={cur('/admin/dashboard')}>Dashboard</a>{/if}
 			<a href="/admin/accounts" aria-current={cur('/admin/accounts')}>Accounts</a>
 			<a href="/admin/users" aria-current={cur('/admin/users')}>Users</a>
 			{#if data.can.logs}<a href="/admin/logs" aria-current={cur('/admin/logs')}>Logs</a>{/if}
