@@ -1,13 +1,15 @@
 <script lang="ts">
+	import { useAdminTime } from '$lib/admin/tz';
 	import { page } from '$app/stores';
 	import RowMenu from '$lib/components/admin/RowMenu.svelte';
 	import RecordModal from '$lib/components/admin/RecordModal.svelte';
 	import type { ActionData, PageData } from './$types';
+	const { fmt: fmtT, fmtDate: fmtD0 } = useAdminTime();
 	export let data: PageData;
 	export let form: ActionData;
 
 	type U = PageData['users'][number];
-	const fmt = (d: Date | string | null) => (d ? new Date(d).toISOString().replace('T', ' ').slice(0, 16) + ' UTC' : 'never');
+	$: fmt = (d: Date | string | null) => (d ? $fmtT(d) : 'never');
 	const isLocked = (d: Date | string | null) => !!d && new Date(d) > new Date();
 	const ROLE: Record<string, [string, string]> = { owner: ['#E0E7FF', '#3730A3'], admin: ['#DBEAFE', '#1d4ed8'], member: ['#F1F5F9', '#475569'] };
 	const SF = { synced: ['Synced', '#DCFCE7', '#15803d'], not_in_sf: ['Not in Salesforce', '#FEE2E2', '#b91c1c'], unknown: ['Unknown', '#FEF3C7', '#92400e'] } as const;

@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { useAdminTime } from '$lib/admin/tz';
+	const { val: valT } = useAdminTime();
 	import { enhance } from '$app/forms';
 	import RecordModal from './RecordModal.svelte';
 
@@ -116,7 +118,7 @@
 							{:else if r.mono && r.value !== '—'}
 								<button type="button" class="copy" title="Click to copy" on:click={() => copy(r.value)}>{r.value}</button>
 							{:else}
-								<span>{r.value}</span>
+								<span>{$valT(r.value)}</span>
 							{/if}
 							{#if r.note && !(editing && r.editable)}<span class="adm-muted note">{r.note}</span>{/if}
 						</div>

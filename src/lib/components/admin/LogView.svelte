@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { useAdminTime } from '$lib/admin/tz';
+	const { fmt: fmtT } = useAdminTime();
 	import type { LogEntry } from '$lib/server/admin/logs';
 	export let entries: LogEntry[] = [];
 	export let nextCursor: string | null = null;
@@ -24,8 +26,8 @@
 				</select>
 			</label>
 		{/if}
-		<label>From (UTC)<input type="datetime-local" name="from" value={filters.from ?? ''} /></label>
-		<label>To (UTC)<input type="datetime-local" name="to" value={filters.to ?? ''} /></label>
+		<label>From (UTC filter)<input type="datetime-local" name="from" value={filters.from ?? ''} /></label>
+		<label>To (UTC filter)<input type="datetime-local" name="to" value={filters.to ?? ''} /></label>
 		<label>Severity
 			<select name="severity">
 				<option value="">Any</option>
@@ -50,14 +52,14 @@
 	{:else}
 		<div class="adm-table-wrap">
 			<table class="adm-table">
-				<caption class="adm-sr">Log records, newest first (UTC)</caption>
+				<caption class="adm-sr">Log records, newest first</caption>
 				<thead>
-					<tr><th scope="col">Time (UTC)</th><th scope="col">Source</th><th scope="col">Sev.</th><th scope="col">Event</th><th scope="col">Message</th><th scope="col">Account</th></tr>
+					<tr><th scope="col">Time</th><th scope="col">Source</th><th scope="col">Sev.</th><th scope="col">Event</th><th scope="col">Message</th><th scope="col">Account</th></tr>
 				</thead>
 				<tbody>
 					{#each entries as e (e.source + e.id)}
 						<tr>
-							<td class="adm-mono">{e.ts.replace('T', ' ').slice(0, 23)}</td>
+							<td class="adm-mono">{$fmtT(e.ts, { seconds: true })}</td>
 							<td>{e.source}</td>
 							<td>{e.severity ?? '—'}</td>
 							<td>{e.event}{#if e.origin}<br /><span class="adm-muted">{e.origin}</span>{/if}</td>

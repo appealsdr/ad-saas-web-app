@@ -130,7 +130,7 @@ describe('pagination helpers', () => {
 
 describe('requireStaff (fail closed)', () => {
 	const ctx = (role: StaffContext['role'], freshMfa = true): StaffContext => ({
-		userId: 'u', email: 'e@x', displayName: null, role, sessionId: 's', mfaVerifiedAt: new Date(), freshMfa
+		userId: 'u', email: 'e@x', displayName: null, role, sessionId: 's', mfaVerifiedAt: new Date(), freshMfa, timeZone: null
 	});
 	const ev = (staff: StaffContext | null, method = 'GET') =>
 		({ locals: { staff }, url: new URL('http://x/admin/data?a=1'), request: new Request('http://x', { method }) }) as any;

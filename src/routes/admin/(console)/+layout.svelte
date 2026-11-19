@@ -1,7 +1,12 @@
 <script lang="ts">
 	import { navigating, page } from '$app/stores';
+	import { provideAdminTime } from '$lib/admin/tz';
+	import { resolveTimeZone } from '$lib/admin/time';
 	import type { LayoutData } from './$types';
 	export let data: LayoutData;
+	const savedTz = provideAdminTime(data.staff.timeZone);
+	$: savedTz.set(data.staff.timeZone);
+	$: zone = resolveTimeZone(data.staff.timeZone);
 	$: path = $navigating?.to?.url.pathname ?? $page.url.pathname;
 	$: cur = (p: string) => (path === p || path.startsWith(p + '/') ? 'page' : undefined);
 </script>
@@ -18,6 +23,7 @@
 			{#if data.can.staff}<a href="/admin/staff" aria-current={cur('/admin/staff')}>Staff</a>{/if}
 		</nav>
 		<span class="adm-spacer"></span>
+		<a class="adm-who" href="/admin/time-zone" title="Change your display time zone" aria-current={cur('/admin/time-zone')}>🕒 {zone}</a>
 		<span class="adm-who">{data.staff.email} · {data.staff.role === 'platform_admin' ? 'Admin' : 'Viewer'}</span>
 		<form method="POST" action="/admin/logout"><button class="adm-btn outline sm" type="submit">Sign out</button></form>
 	</header>

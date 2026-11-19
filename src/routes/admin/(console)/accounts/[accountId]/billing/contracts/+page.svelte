@@ -1,8 +1,10 @@
 <script lang="ts">
+	import { useAdminTime } from '$lib/admin/tz';
 	import { page } from '$app/stores';
 	import RowMenu from '$lib/components/admin/RowMenu.svelte';
 	import RecordModal from '$lib/components/admin/RecordModal.svelte';
 	import type { ActionData, PageData } from './$types';
+	const { fmt: fmtT, fmtDate: fmtD0 } = useAdminTime();
 	export let data: PageData;
 	export let form: ActionData;
 
@@ -25,7 +27,7 @@
 	$: totals = { amount: list.reduce((n, c) => n + c.amount, 0), paid: list.reduce((n, c) => n + c.payments.filter((p) => p.status === 'paid' && !p.isLine).reduce((a, p) => a + p.amount, 0), 0) };
 
 	const money = (n: number) => '$' + n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-	const fmtD = (iso: string | null) => (iso ? new Date(iso + (iso.length === 10 ? 'T00:00:00' : '')).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—');
+	$: fmtD = (iso: string | null) => (iso ? $fmtD0(iso) : '—');
 	const PAY = { paid: ['Paid', '#DCFCE7', '#15803d'], due: ['Due', '#FEF3C7', '#92400e'], failed: ['Failed', '#FEE2E2', '#b91c1c'], closed: ['Closed', '#F1F5F9', '#475569'], inactive: ['Not Active', '#F1F5F9', '#475569'], ready: ['Ready to pay', '#DBEAFE', '#1d4ed8'] } as const;
 	const SF = { synced: ['Synced', '#DCFCE7', '#15803d'], not_in_sf: ['Not in Salesforce', '#FEE2E2', '#b91c1c'], unknown: ['Unknown', '#FEF3C7', '#92400e'] } as const;
 	function toggle(id: string) { open.has(id) ? open.delete(id) : open.add(id); open = open; }

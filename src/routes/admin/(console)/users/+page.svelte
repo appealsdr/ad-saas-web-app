@@ -1,9 +1,11 @@
 <script lang="ts">
+	import { useAdminTime } from '$lib/admin/tz';
 	import type { PageData } from './$types';
+	const { fmt: fmtT, fmtDate: fmtD0 } = useAdminTime();
 	export let data: PageData;
 	$: pages = Math.max(1, Math.ceil(data.total / data.pageSize));
 	$: base = new URLSearchParams({ q: data.q, filter: data.filter, pageSize: String(data.pageSize) }).toString();
-	const fmt = (d: Date | string | null) => (d ? new Date(d).toISOString().slice(0, 16).replace('T', ' ') + ' UTC' : 'never');
+	$: fmt = (d: Date | string | null) => (d ? $fmtT(d) : 'never');
 </script>
 
 <svelte:head><title>Users — Admin</title></svelte:head>

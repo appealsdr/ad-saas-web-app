@@ -145,13 +145,13 @@ export async function accountContracts(accountId: string, opts: { storeId?: stri
 				key: p.Id, sfId: p.Id, name: p.Name || p.Id, contractId: r.id, contractRef: ref(r.id), storeName: r.store_name,
 				kind: p.Payment_Type__c === 'Balance' ? `Balance${p.Description__c ? ` · ${p.Description__c}` : ''}` : p.Contract_Line_Item__c ? `Line payment${p.Description__c ? ` · ${p.Description__c}` : ''}` : p.Payment_Type__c || 'First Payment',
 				amount: Number(p.Amount__c ?? 0), status: mapPayStatus(p.Status__c, p.Payment_Type__c === 'Balance'), statusRaw: p.Status__c ?? 'Pending',
-				date: (p.PaidAt__c || p.Payment_Date__c || p.CreatedDate).slice(0, 10), stripePi: p.Stripe_Payment_Intent_Id__c, isLine: !!p.Contract_Line_Item__c && p.Payment_Type__c !== 'Balance', contractSource: 'app'
+				date: (p.PaidAt__c || p.Payment_Date__c || p.CreatedDate), stripePi: p.Stripe_Payment_Intent_Id__c, isLine: !!p.Contract_Line_Item__c && p.Payment_Type__c !== 'Balance', contractSource: 'app'
 			}));
 		if (!payments.length) {
 			payments.push({
 				key: `local:${r.id}`, sfId: null, name: `PAY-${r.id.slice(0, 8).toUpperCase()}`, contractId: r.id, contractRef: ref(r.id), storeName: r.store_name,
 				kind: r.kind === 'subscription' ? 'Subscription' : 'Paid in full', amount: Number(r.amount_cents) / 100, status: 'paid', statusRaw: 'Paid',
-				date: (r.paid_at ?? new Date()).toISOString().slice(0, 10), stripePi: r.stripe_payment_intent_id, isLine: false, contractSource: 'app'
+				date: (r.paid_at ?? new Date()).toISOString(), stripePi: r.stripe_payment_intent_id, isLine: false, contractSource: 'app'
 			});
 		}
 		return {
@@ -175,7 +175,7 @@ export async function accountContracts(accountId: string, opts: { storeId?: stri
 			key: p.Id, sfId: p.Id, name: p.Name || p.Id, contractId: c.Id, contractRef: cref, storeName,
 			kind: p.Payment_Type__c === 'Balance' ? `Balance${p.Description__c ? ` · ${p.Description__c}` : ''}` : p.Contract_Line_Item__c ? `Line payment${p.Description__c ? ` · ${p.Description__c}` : ''}` : p.Payment_Type__c || 'First Payment',
 			amount: Number(p.Amount__c ?? 0), status: mapPayStatus(p.Status__c, p.Payment_Type__c === 'Balance'), statusRaw: p.Status__c ?? 'Pending',
-			date: (p.PaidAt__c || p.Payment_Date__c || p.CreatedDate).slice(0, 10), stripePi: p.Stripe_Payment_Intent_Id__c, isLine: !!p.Contract_Line_Item__c && p.Payment_Type__c !== 'Balance', contractSource: 'salesforce'
+			date: (p.PaidAt__c || p.Payment_Date__c || p.CreatedDate), stripePi: p.Stripe_Payment_Intent_Id__c, isLine: !!p.Contract_Line_Item__c && p.Payment_Type__c !== 'Balance', contractSource: 'salesforce'
 		}));
 		return {
 			id: c.Id, ref: cref, kind: 'service', status: c.Status, paymentStatus: null, storeId: null, storeName,

@@ -11,6 +11,8 @@ import { isPlatformRole, type PlatformRole } from './permissions';
 import { hashPassword } from '../auth/password';
 import { generateTempPassword } from '../auth/temp_password';
 
+import { isValidTimeZone } from '../../admin/time';
+
 export class StaffError extends Error {}
 
 export interface StaffRow {
@@ -22,12 +24,13 @@ export interface StaffRow {
 	created_at: Date;
 	mfa_enrolled: boolean;
 	has_password: boolean;
+	time_zone: string | null;
 }
 
 export async function listStaff(): Promise<StaffRow[]> {
 	return sql<StaffRow[]>`
 		SELECT ps.user_id, ps.email, ps.display_name, ps.role, ps.is_active, ps.created_at,
-		       (m.confirmed_at IS NOT NULL) AS mfa_enrolled, (ps.password_hash IS NOT NULL) AS has_password
+		       (m.confirmed_at IS NOT NULL) AS mfa_enrolled, (ps.password_hash IS NOT NULL) AS has_password, ps.time_zone
 		FROM platform_staff ps
 		LEFT JOIN admin_mfa_credentials m ON m.user_id = ps.user_id
 		ORDER BY ps.is_active DESC, ps.email
@@ -193,4 +196,13 @@ export async function setStaffPassword(args: {
 		);
 	});
 	return { generated: supplied ? null : password };
+}
+
+/** Set (or clear with null/'') an admin's display time zone. Stored value is an IANA name; data stays UTC. */
+export async function setStaffTimeZone(args: { userId: string; timeZone: string | null; actor: AuditActor; ip?: string | null }): Promise<void> {
+	const tz = args.timeZone?.trim() || null;
+	if (tz !== null && !isValidTimeZone(tz)) throw new StaffError('Choose a valid time zone.');
+	const rows = await sql<{ user_id: string }[]>`UPDATE platform_staff SET time_zone = ${tz} WHERE user_id = ${args.userId} RETURNING user_id`;
+	if (!rows.length) throw new StaffError('That user is not platform staff.');
+	await recordAudit({ actor: args.actor, action: 'staff.time_zone_set', targetType: 'user', targetId: args.userId, outcome: 'success', ip: args.ip, metadata: { timeZone: tz } });
 }

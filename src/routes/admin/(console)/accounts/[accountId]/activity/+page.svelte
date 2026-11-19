@@ -1,7 +1,9 @@
 <script lang="ts">
+	import { useAdminTime } from '$lib/admin/tz';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
 	import type { PageData } from './$types';
+	const { fmt: fmtT, fmtDate: fmtD0 } = useAdminTime();
 	export let data: PageData;
 
 	$: base = `/admin/accounts/${$page.params.accountId}/activity`;
@@ -15,7 +17,7 @@
 		const s = Math.max(0, (Date.now() - new Date(d).getTime()) / 1000);
 		return s < 60 ? 'just now' : s < 3600 ? `${Math.floor(s / 60)} min ago` : s < 86400 ? `${Math.floor(s / 3600)} h ago` : `${Math.floor(s / 86400)} d ago`;
 	};
-	const ts = (d: Date | string) => new Date(d).toISOString().replace('T', ' ').slice(0, 19) + ' UTC';
+	$: ts = (d: Date | string) => $fmtT(d, { seconds: true });
 	const dur = (ms: number | null) => (ms == null ? '—' : ms < 60000 ? `${Math.round(ms / 1000)}s` : `${Math.round(ms / 60000)} min`);
 	const TYPE_CHIP: Record<string, [string, string]> = {
 		page_view: ['#DBEAFE', '#1d4ed8'], click: ['#F1F5F9', '#475569'], action: ['#FEF3C7', '#92400e'], login: ['#DCFCE7', '#15803d'], logout: ['#F1F5F9', '#475569']
