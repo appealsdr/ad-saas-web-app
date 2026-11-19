@@ -13,7 +13,7 @@ import { resyncAction } from '$lib/server/admin/resync_action';
 import { listAccountUsers } from '$lib/server/admin/accounts';
 import { roleHas } from '$lib/server/admin/permissions';
 import { auditActor, clientIp, isUuid } from '$lib/server/admin/guard';
-import { ActionError, initiatePasswordReset, manageCustomerUser, setTemporaryPassword, type UserAction } from '$lib/server/admin/actions';
+import { ActionError, createAccountUser, initiatePasswordReset, manageCustomerUser, setTemporaryPassword, type UserAction } from '$lib/server/admin/actions';
 
 export const load: PageServerLoad = async (event) => {
 	const { staff, accountId } = await workspace(event, 'users.read');
@@ -33,6 +33,26 @@ const ACTIONS: UserAction[] = ['suspend', 'reactivate', 'unlock', 'revoke_sessio
 const VIEW_AS_TTL_MS = 30 * 60 * 1000;
 
 export const actions: Actions = {
+	create: async (event) => {
+		const { staff, accountId } = await workspace(event, 'users.manage');
+		const d = await event.request.formData();
+		const email = String(d.get('email') ?? '');
+		const displayName = String(d.get('displayName') ?? '');
+		const role = String(d.get('role') ?? '');
+		const mode = String(d.get('mode') ?? '');
+		try {
+			const r = await createAccountUser(
+				{ actor: auditActor(staff), ip: clientIp(event), origin: event.url.origin },
+				accountId,
+				{ email, displayName, role, mode: mode as 'temp_password' | 'setup_link' },
+				String(d.get('reason') ?? '')
+			);
+			return { ok: r.message, tempPassword: r.tempPassword, userId: r.userId };
+		} catch (e) {
+			if (e instanceof ActionError) return fail(e.status, { error: e.message });
+			throw e;
+		}
+	},
 	/** Open a read-only customer session for this user (30 min). MFA-fresh, reasoned, audited. */
 	impersonate: async (event) => {
 		const { staff, accountId } = await workspace(event, 'users.manage', { freshMfa: true });

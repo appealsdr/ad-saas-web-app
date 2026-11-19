@@ -21,7 +21,7 @@ import { recordAudit, type AuditActor } from './audit';
 import { getAccount, getAccountUser } from './accounts';
 import { setRequestAccount } from './request_context';
 import { updateSalesforceAccount } from '../salesforce/records';
-import { sendPasswordChangedEmail, sendPasswordResetEmail } from '../salesforce/email';
+import { sendPasswordChangedEmail, sendPasswordResetEmail, sendWelcomeSetupLinkEmail } from '../salesforce/email';
 import { logError, describeError } from '../error_log';
 import { hashPassword } from '../auth/password';
 import { generateTempPassword } from '../auth/temp_password';
@@ -370,6 +370,110 @@ export async function setTemporaryPassword(
 		message: `Temporary password set for ${user.email}. They must choose a new password at next sign-in. ${notified ? 'A notification email was sent to them.' : 'The notification email could NOT be sent — tell them directly.'}`,
 		tempPassword
 	};
+}
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const CUSTOMER_ROLES = ['owner', 'admin', 'member'] as const;
+export type CustomerRole = (typeof CUSTOMER_ROLES)[number];
+export type NewUserMode = 'temp_password' | 'setup_link';
+
+/**
+ * Create a new customer user on an existing account, chosen by the admin to
+ * either (a) get a one-time temporary password shown once to the admin, or
+ * (b) get emailed a one-time link to choose their own password. Case (b)
+ * reuses the existing password_reset_tokens table/consumption page — the
+ * link is just a longer-lived "first set your password" token.
+ */
+export async function createAccountUser(
+	ctx: Ctx & { origin: string },
+	accountId: string,
+	input: { email: string; displayName: string; role: string; mode: NewUserMode },
+	reason: string | null
+): Promise<{ message: string; userId: string; tempPassword?: string }> {
+	const why = requireReason(reason);
+	setRequestAccount(accountId);
+
+	const account = await getAccount(accountId);
+	if (!account) throw new ActionError('Account not found.', 404);
+
+	const email = input.email.trim().toLowerCase();
+	const displayName = input.displayName.trim();
+	if (!EMAIL_RE.test(email) || email.length > 254) throw new ActionError('Enter a valid email address.', 422);
+	if (!displayName || displayName.length > 200) throw new ActionError('Enter a name (1–200 characters).', 422);
+	if (!CUSTOMER_ROLES.includes(input.role as CustomerRole)) throw new ActionError('Invalid customer role.', 422);
+	if (input.mode !== 'temp_password' && input.mode !== 'setup_link') throw new ActionError('Invalid mode.', 422);
+
+	const [existing] = await sql<{ id: string }[]>`SELECT id FROM users WHERE email = ${email}`;
+	if (existing) throw new ActionError('A user with that email already exists.', 409);
+
+	let tempPassword: string | undefined;
+	let passwordHash: string | null = null;
+	if (input.mode === 'temp_password') {
+		tempPassword = generateTempPassword();
+		passwordHash = await hashPassword(tempPassword);
+	}
+
+	const correlationId = randomUUID();
+	const userId = await sql.begin(async (tx) => {
+		const [row] = await tx<{ id: string }[]>`
+			INSERT INTO users (email, display_name, password_hash, account_id, role, must_reset_password)
+			VALUES (${email}, ${displayName}, ${passwordHash}, ${accountId}, ${input.role}, ${input.mode === 'temp_password'})
+			RETURNING id
+		`;
+		await recordAudit(
+			{
+				actor: ctx.actor,
+				action: 'user.create',
+				targetType: 'user',
+				targetId: row.id,
+				targetAccountId: accountId,
+				outcome: 'success',
+				reason: why,
+				ip: ctx.ip,
+				metadata: { correlationId, targetEmail: email, role: input.role, mode: input.mode }
+			},
+			tx
+		);
+		return row.id;
+	});
+
+	if (input.mode === 'temp_password') {
+		const notified = await sendPasswordChangedEmail(email, 'admin', { userId, accountId });
+		await recordAudit(
+			{ actor: ctx.actor, action: 'user.create.notification', targetType: 'user', targetId: userId, targetAccountId: accountId, outcome: notified ? 'success' : 'failure', ip: ctx.ip, metadata: { correlationId, kind: 'admin_temporary' } },
+			sql,
+			{ bestEffort: true }
+		);
+		return {
+			message: `User ${email} created with a temporary password. ${notified ? 'A notification email was sent to them.' : 'The notification email could NOT be sent — tell them directly.'}`,
+			userId,
+			tempPassword
+		};
+	}
+
+	// setup_link: issue a one-time, longer-lived password-reset token and email it.
+	const rawToken = randomBytes(32).toString('hex');
+	const tokenHash = createHash('sha256').update(rawToken).digest('hex');
+	await sql`
+		INSERT INTO password_reset_tokens (user_id, email, token_hash, expires_at)
+		VALUES (${userId}, ${email}, ${tokenHash}, now() + interval '7 days')
+	`;
+	try {
+		const notified = await sendWelcomeSetupLinkEmail(email, `${ctx.origin}/reset-password?token=${rawToken}`, { userId, accountId });
+		await recordAudit(
+			{ actor: ctx.actor, action: 'user.create.notification', targetType: 'user', targetId: userId, targetAccountId: accountId, outcome: notified ? 'success' : 'failure', ip: ctx.ip, metadata: { correlationId, kind: 'setup_link' } },
+			sql,
+			{ bestEffort: true }
+		);
+		if (!notified) {
+			return { message: `User ${email} created, but the setup email could not be delivered. Use "Reset password (email link)" to try again, or set a temporary password.`, userId };
+		}
+	} catch (e) {
+		await sql`DELETE FROM password_reset_tokens WHERE token_hash = ${tokenHash}`.catch(() => {});
+		await logError({ source: 'admin.create_user', operation: 'send_setup_link', accountId, userId, errorMessage: e instanceof Error ? e.message : String(e) });
+		return { message: `User ${email} created, but the setup email could not be delivered. Use "Reset password (email link)" to try again, or set a temporary password.`, userId };
+	}
+	return { message: `User ${email} created. A one-time setup link (valid 7 days) was emailed to them.`, userId };
 }
 
 // ─── Account deletion ─────────────────────────────────────────────────────
