@@ -192,6 +192,50 @@ If you did not expect this, contact us right away so we can secure your account.
 	return true;
 }
 
+/**
+ * AD-1955: a platform administrator created this user on an existing account
+ * and chose to let them set their own password rather than issuing a
+ * temporary one. The link re-uses the same /reset-password flow and token
+ * table as a normal password reset.
+ */
+export async function sendWelcomeSetupLinkEmail(
+	email: string,
+	setupUrl: string,
+	context: { sfdcContactId?: string | null; userId?: string; accountId?: string } = {}
+): Promise<boolean> {
+	const subject = 'Set up your Appeals Doctor account';
+	const body = `
+Hello,
+
+An administrator created an Appeals Doctor account for you (${email}).
+
+Click the link below to choose your password and sign in. The link is valid for 7 days and can only be used once.
+
+${setupUrl}
+
+If you were not expecting this, you can safely ignore this email.
+
+— The Appeals Doctor Team
+`.trim();
+	try {
+		await sendEmailViaSalesforce({ emailAddresses: email, emailSubject: subject, emailBody: body, senderDisplayName: 'Appeals Doctor' });
+	} catch (e) {
+		await logError({
+			source: 'salesforce.email',
+			operation: 'send_welcome_setup_link',
+			userId: context.userId,
+			accountId: context.accountId,
+			sfdcObject: 'Contact',
+			errorMessage: e instanceof Error ? e.message : String(e),
+			stack: e instanceof Error ? e.stack : undefined,
+			context: { email }
+		});
+		return false;
+	}
+	if (context.sfdcContactId) await logEmailToContact(context.sfdcContactId, { toAddress: email, subject, textBody: body }, context);
+	return true;
+}
+
 /** AD-1946: confirm the address of a public signup before any Salesforce records are created. */
 export async function sendVerificationEmail(email: string, verifyUrl: string, context: { userId?: string; accountId?: string } = {}): Promise<void> {
 	const body = `

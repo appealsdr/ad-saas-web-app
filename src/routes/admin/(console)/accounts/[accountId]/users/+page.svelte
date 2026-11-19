@@ -3,6 +3,7 @@
 	import { page } from '$app/stores';
 	import RowMenu from '$lib/components/admin/RowMenu.svelte';
 	import RecordModal from '$lib/components/admin/RecordModal.svelte';
+	import { enhance } from '$app/forms';
 	import type { ActionData, PageData } from './$types';
 	const { fmt: fmtT, fmtDate: fmtD0 } = useAdminTime();
 	export let data: PageData;
@@ -22,6 +23,14 @@
 		hidden: Record<string, string>; submit: string; native?: boolean;
 	};
 	let modal: M | null = null;
+	let showCreate = false;
+	let createEmail = '';
+	let createName = '';
+	let createRole = 'member';
+	let createMode: 'temp_password' | 'setup_link' = 'setup_link';
+	let createReason = '';
+	let creating = false;
+	$: createOk = /\S+@\S+\.\S+/.test(createEmail) && createName.trim().length > 0 && createReason.trim().length >= 5;
 
 	const matches = (u: U, f: string) =>
 		f === 'all' || (f === 'active' ? u.is_active : f === 'suspended' ? !u.is_active : f === 'locked' ? isLocked(u.locked_until) : u.sfState !== 'synced');
@@ -77,6 +86,9 @@
 	<div class="toolbar">
 		<input type="search" class="adm-input search" placeholder="Search users by name, email, role, user ID or Salesforce ID…" aria-label="Search users" bind:value={search} />
 		{#if search}<button type="button" class="adm-btn outline sm" on:click={() => (search = '')}>Clear</button>{/if}
+		{#if data.canManage}
+			<button type="button" class="adm-btn" on:click={() => { createEmail = ''; createName = ''; createRole = 'member'; createMode = 'setup_link'; createReason = ''; showCreate = true; }}>＋ Add user</button>
+		{/if}
 	</div>
 	<div class="pillbar">
 		{#each FILTERS as [k, label]}
@@ -130,6 +142,47 @@
 		submitLabel={modal.submit} native={modal.native ?? false} on:close={() => (modal = null)} />
 {/if}
 
+{#if showCreate}
+	<div class="backdrop" role="presentation" on:click={() => (showCreate = false)}>
+		<div class="modal" role="dialog" aria-modal="true" aria-label="Add user" tabindex="-1" on:click|stopPropagation on:keydown|stopPropagation>
+			<header><h3>Add user</h3><button type="button" class="x" aria-label="Close" on:click={() => (showCreate = false)}>✕</button></header>
+			<form method="POST" action="?/create" use:enhance={() => { creating = true; return async ({ update }) => { await update({ reset: false }); creating = false; showCreate = false; }; }}>
+				<div class="body">
+					<label>Email *
+						<input class="adm-input" name="email" type="email" required maxlength="254" bind:value={createEmail} />
+					</label>
+					<label>Name *
+						<input class="adm-input" name="displayName" type="text" required maxlength="200" bind:value={createName} />
+					</label>
+					<label>Customer role
+						<select class="adm-input" name="role" bind:value={createRole}>
+							<option value="member">Member</option>
+							<option value="admin">Admin</option>
+							<option value="owner">Owner</option>
+						</select>
+					</label>
+					<fieldset class="modebox">
+						<legend>How should they get access?</legend>
+						<label class="radio"><input type="radio" name="mode" value="setup_link" bind:group={createMode} />
+							<span><strong>Email a one-time setup link</strong> — they get a link (valid 7 days, single use) to choose their own password.</span>
+						</label>
+						<label class="radio"><input type="radio" name="mode" value="temp_password" bind:group={createMode} />
+							<span><strong>Set a temporary password</strong> — shown to you once, to share with them yourself; they must change it at next sign-in.</span>
+						</label>
+					</fieldset>
+					<label>Reason (required, 5–500 characters)
+						<input class="adm-input" name="reason" required minlength="5" maxlength="500" bind:value={createReason} />
+					</label>
+				</div>
+				<footer>
+					<button type="button" class="adm-btn outline" on:click={() => (showCreate = false)}>Cancel</button>
+					<button type="submit" class="adm-btn" disabled={!createOk || creating}>{creating ? 'Creating…' : 'Create user'}</button>
+				</footer>
+			</form>
+		</div>
+	</div>
+{/if}
+
 <style>
 	.toolbar { display: flex; gap: 8px; margin-bottom: 12px; }
 	.search { flex: 1; }
@@ -139,4 +192,18 @@
 	.pill span { opacity: .7; margin-left: 3px; }
 	.foot { margin-left: auto; font-size: 12px; }
 	.chip { display: inline-block; padding: 2px 9px; border-radius: 12px; font-size: 11px; font-weight: 700; white-space: nowrap; }
+
+	.backdrop { position: fixed; inset: 0; background: rgba(15,23,42,.55); z-index: 1300; display: flex; align-items: center; justify-content: center; padding: 24px; }
+	.modal { background: #fff; border-radius: 12px; width: min(560px, 100%); max-height: 88vh; display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 24px 80px rgba(0,0,0,.25); }
+	.modal header { display: flex; align-items: center; justify-content: space-between; padding: 14px 18px; border-bottom: 1px solid var(--grey-line); }
+	.modal h3 { margin: 0; font-size: 16px; font-weight: 800; color: var(--navy); }
+	.modal .x { background: none; border: none; font-size: 16px; cursor: pointer; color: var(--grey-text); }
+	.modal form { display: flex; flex-direction: column; min-height: 0; }
+	.modal .body { padding: 18px; overflow: auto; display: flex; flex-direction: column; gap: 12px; }
+	.modal label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; font-weight: 700; color: var(--grey-text); }
+	.modebox { border: 1px solid var(--grey-line); border-radius: 8px; padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; }
+	.modebox legend { font-size: 12px; font-weight: 700; color: var(--navy); padding: 0 2px; }
+	.radio { flex-direction: row !important; align-items: flex-start; gap: 8px; font-weight: 400; font-size: 13px; color: var(--navy); }
+	.radio input { margin-top: 3px; }
+	.modal footer { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 18px; border-top: 1px solid var(--grey-line); }
 </style>

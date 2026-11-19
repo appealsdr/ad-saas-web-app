@@ -20,8 +20,9 @@ import { sql } from '../db';
 import { recordAudit, type AuditActor } from './audit';
 import { getAccount, getAccountUser } from './accounts';
 import { setRequestAccount } from './request_context';
-import { updateSalesforceAccount } from '../salesforce/records';
-import { sendPasswordChangedEmail, sendPasswordResetEmail } from '../salesforce/email';
+import { updateSalesforceAccount, updateSalesforceContact } from '../salesforce/records';
+import { sendPasswordChangedEmail, sendPasswordResetEmail, sendWelcomeSetupLinkEmail } from '../salesforce/email';
+import { splitFullName } from '../salesforce/sync';
 import { logError, describeError } from '../error_log';
 import { hashPassword } from '../auth/password';
 import { generateTempPassword } from '../auth/temp_password';
@@ -370,6 +371,250 @@ export async function setTemporaryPassword(
 		message: `Temporary password set for ${user.email}. They must choose a new password at next sign-in. ${notified ? 'A notification email was sent to them.' : 'The notification email could NOT be sent — tell them directly.'}`,
 		tempPassword
 	};
+}
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const CUSTOMER_ROLES = ['owner', 'admin', 'member'] as const;
+export type CustomerRole = (typeof CUSTOMER_ROLES)[number];
+export type NewUserMode = 'temp_password' | 'setup_link';
+
+/**
+ * Create a new customer user on an existing account, chosen by the admin to
+ * either (a) get a one-time temporary password shown once to the admin, or
+ * (b) get emailed a one-time link to choose their own password. Case (b)
+ * reuses the existing password_reset_tokens table/consumption page — the
+ * link is just a longer-lived "first set your password" token.
+ */
+export async function createAccountUser(
+	ctx: Ctx & { origin: string },
+	accountId: string,
+	input: { email: string; displayName: string; role: string; mode: NewUserMode },
+	reason: string | null
+): Promise<{ message: string; userId: string; tempPassword?: string }> {
+	const why = requireReason(reason);
+	setRequestAccount(accountId);
+
+	const account = await getAccount(accountId);
+	if (!account) throw new ActionError('Account not found.', 404);
+
+	const email = input.email.trim().toLowerCase();
+	const displayName = input.displayName.trim();
+	if (!EMAIL_RE.test(email) || email.length > 254) throw new ActionError('Enter a valid email address.', 422);
+	if (!displayName || displayName.length > 200) throw new ActionError('Enter a name (1–200 characters).', 422);
+	if (!CUSTOMER_ROLES.includes(input.role as CustomerRole)) throw new ActionError('Invalid customer role.', 422);
+	if (input.mode !== 'temp_password' && input.mode !== 'setup_link') throw new ActionError('Invalid mode.', 422);
+
+	const [existing] = await sql<{ id: string }[]>`SELECT id FROM users WHERE email = ${email}`;
+	if (existing) throw new ActionError('A user with that email already exists.', 409);
+
+	let tempPassword: string | undefined;
+	let passwordHash: string | null = null;
+	if (input.mode === 'temp_password') {
+		tempPassword = generateTempPassword();
+		passwordHash = await hashPassword(tempPassword);
+	}
+
+	const correlationId = randomUUID();
+	const userId = await sql.begin(async (tx) => {
+		const [row] = await tx<{ id: string }[]>`
+			INSERT INTO users (email, display_name, password_hash, account_id, role, must_reset_password)
+			VALUES (${email}, ${displayName}, ${passwordHash}, ${accountId}, ${input.role}, ${input.mode === 'temp_password'})
+			RETURNING id
+		`;
+		await recordAudit(
+			{
+				actor: ctx.actor,
+				action: 'user.create',
+				targetType: 'user',
+				targetId: row.id,
+				targetAccountId: accountId,
+				outcome: 'success',
+				reason: why,
+				ip: ctx.ip,
+				metadata: { correlationId, targetEmail: email, role: input.role, mode: input.mode }
+			},
+			tx
+		);
+		return row.id;
+	});
+
+	if (input.mode === 'temp_password') {
+		const notified = await sendPasswordChangedEmail(email, 'admin', { userId, accountId });
+		await recordAudit(
+			{ actor: ctx.actor, action: 'user.create.notification', targetType: 'user', targetId: userId, targetAccountId: accountId, outcome: notified ? 'success' : 'failure', ip: ctx.ip, metadata: { correlationId, kind: 'admin_temporary' } },
+			sql,
+			{ bestEffort: true }
+		);
+		return {
+			message: `User ${email} created with a temporary password. ${notified ? 'A notification email was sent to them.' : 'The notification email could NOT be sent — tell them directly.'}`,
+			userId,
+			tempPassword
+		};
+	}
+
+	// setup_link: issue a one-time, longer-lived password-reset token and email it.
+	const rawToken = randomBytes(32).toString('hex');
+	const tokenHash = createHash('sha256').update(rawToken).digest('hex');
+	await sql`
+		INSERT INTO password_reset_tokens (user_id, email, token_hash, expires_at)
+		VALUES (${userId}, ${email}, ${tokenHash}, now() + interval '7 days')
+	`;
+	try {
+		const notified = await sendWelcomeSetupLinkEmail(email, `${ctx.origin}/reset-password?token=${rawToken}`, { userId, accountId });
+		await recordAudit(
+			{ actor: ctx.actor, action: 'user.create.notification', targetType: 'user', targetId: userId, targetAccountId: accountId, outcome: notified ? 'success' : 'failure', ip: ctx.ip, metadata: { correlationId, kind: 'setup_link' } },
+			sql,
+			{ bestEffort: true }
+		);
+		if (!notified) {
+			return { message: `User ${email} created, but the setup email could not be delivered. Use "Reset password (email link)" to try again, or set a temporary password.`, userId };
+		}
+	} catch (e) {
+		await sql`DELETE FROM password_reset_tokens WHERE token_hash = ${tokenHash}`.catch(() => {});
+		await logError({ source: 'admin.create_user', operation: 'send_setup_link', accountId, userId, errorMessage: e instanceof Error ? e.message : String(e) });
+		return { message: `User ${email} created, but the setup email could not be delivered. Use "Reset password (email link)" to try again, or set a temporary password.`, userId };
+	}
+	return { message: `User ${email} created. A one-time setup link (valid 7 days) was emailed to them.`, userId };
+}
+
+// ─── Customer user profile edit (username / email / display name) ────────
+
+/**
+ * username is local-only (no Salesforce field for it). email and display_name
+ * are shared: the local row is updated, then pushed to the linked Salesforce
+ * Contact (Email / FirstName+LastName) via updateSalesforceContact. Mirrors
+ * the account-edit pattern in updateAccountFields.
+ */
+export const USER_FIELD_OWNERSHIP = {
+	username: 'local',
+	email: 'salesforce-synced',
+	display_name: 'salesforce-synced'
+} as const;
+export type EditableUserField = keyof typeof USER_FIELD_OWNERSHIP;
+export const EDITABLE_USER_FIELDS = Object.keys(USER_FIELD_OWNERSHIP) as EditableUserField[];
+
+const USERNAME_RE = /^[a-zA-Z0-9_.-]{3,50}$/;
+
+export interface UserEditResult {
+	changed: EditableUserField[];
+	salesforce: 'not_applicable' | 'not_linked' | 'synced' | 'failed';
+	salesforceError?: string;
+	message: string;
+}
+
+export async function updateUserFields(
+	ctx: Ctx,
+	accountId: string,
+	userId: string,
+	input: Partial<Record<EditableUserField, string>>
+): Promise<UserEditResult> {
+	setRequestAccount(accountId);
+	const [current] = await sql<
+		{ id: string; email: string; display_name: string | null; username: string | null; sfdc_contact_id: string | null; is_staff: boolean }[]
+	>`
+		SELECT u.id, u.email, u.display_name, u.username, u.sfdc_contact_id, (ps.user_id IS NOT NULL) AS is_staff
+		FROM users u LEFT JOIN platform_staff ps ON ps.user_id = u.id
+		WHERE u.id = ${userId} AND u.account_id = ${accountId}
+	`;
+	if (!current) throw new ActionError('User not found in this account.', 404);
+	if (current.is_staff) throw new ActionError('Platform staff are managed under Staff, not here.', 403);
+
+	const next: Partial<Record<EditableUserField, string | null>> = {};
+	const changed: EditableUserField[] = [];
+	for (const f of EDITABLE_USER_FIELDS) {
+		if (!(f in input)) continue;
+		let v = (input[f] ?? '').toString().trim();
+		if (f === 'email') {
+			v = v.toLowerCase();
+			if (!EMAIL_RE.test(v) || v.length > 254) throw new ActionError('Enter a valid email address.', 422);
+		} else if (f === 'username') {
+			if (v && !USERNAME_RE.test(v)) throw new ActionError('Username must be 3–50 characters: letters, numbers, dot, underscore or hyphen.', 422);
+		} else if (f === 'display_name') {
+			if (!v) throw new ActionError('Display name is required.', 422);
+			if (v.length > 200) throw new ActionError('Display name is too long.', 422);
+		}
+		const value = v === '' ? null : v;
+		const currentValue = f === 'email' ? current.email : f === 'username' ? current.username : current.display_name;
+		if (value !== (currentValue ?? null)) {
+			next[f] = value;
+			changed.push(f);
+		}
+	}
+	if (!changed.length) throw new ActionError('No changes to save.', 422);
+
+	if (changed.includes('email') && next.email) {
+		const newEmail = next.email;
+		const [dupe] = await sql<{ id: string }[]>`SELECT id FROM users WHERE email = ${newEmail} AND id != ${userId}`;
+		if (dupe) throw new ActionError('A user with that email already exists.', 409);
+	}
+	if (changed.includes('username') && next.username) {
+		const [dupe] = await sql<{ id: string }[]>`SELECT id FROM users WHERE lower(username) = ${next.username.toLowerCase()} AND id != ${userId}`;
+		if (dupe) throw new ActionError('That username is already taken.', 409);
+	}
+
+	const diff = Object.fromEntries(changed.map((f) => [f, { from: f === 'email' ? current.email : f === 'username' ? current.username : current.display_name, to: next[f] ?? null }]));
+
+	await sql.begin(async (tx) => {
+		const set = { ...next } as Record<string, string | null>;
+		try {
+			await tx`UPDATE users SET ${tx(set, ...Object.keys(set))} WHERE id = ${userId} AND account_id = ${accountId}`;
+		} catch (e) {
+			if ((e as { code?: string })?.code === '23505') throw new ActionError('That email or username is already taken.', 409);
+			throw e;
+		}
+		await recordAudit(
+			{
+				actor: ctx.actor,
+				action: 'user.update',
+				targetType: 'user',
+				targetId: userId,
+				targetAccountId: accountId,
+				outcome: 'success',
+				ip: ctx.ip,
+				metadata: { changes: diff, ownership: Object.fromEntries(changed.map((f) => [f, USER_FIELD_OWNERSHIP[f]])) }
+			},
+			tx
+		);
+	});
+
+	const sfFields = changed.filter((f) => USER_FIELD_OWNERSHIP[f] === 'salesforce-synced');
+	const base = `Saved${sfFields.length ? '' : ' (local only — nothing here is synced to Salesforce)'}.`;
+	if (!sfFields.length) return { changed, salesforce: 'not_applicable', message: base };
+	if (!current.sfdc_contact_id) {
+		return { changed, salesforce: 'not_linked', message: `${base} This user has no linked Salesforce contact, so nothing was pushed — use "Create in Salesforce" first.` };
+	}
+
+	const correlationId = randomUUID();
+	await recordAudit(
+		{ actor: ctx.actor, action: 'user.salesforce_sync', targetType: 'user', targetId: userId, targetAccountId: accountId, outcome: 'pending', ip: ctx.ip, metadata: { correlationId, fields: sfFields } },
+		sql,
+		{ bestEffort: true }
+	);
+	const patch: { Email?: string; FirstName?: string | null; LastName?: string } = {};
+	if (sfFields.includes('email')) patch.Email = next.email!;
+	if (sfFields.includes('display_name')) {
+		const { firstName, lastName } = splitFullName(next.display_name ?? current.display_name ?? current.email);
+		patch.FirstName = firstName ?? null;
+		patch.LastName = lastName;
+	}
+	const result = await updateSalesforceContact(current.sfdc_contact_id, patch, { userId, accountId });
+	await recordAudit(
+		{
+			actor: ctx.actor,
+			action: 'user.salesforce_sync',
+			targetType: 'user',
+			targetId: userId,
+			targetAccountId: accountId,
+			outcome: result.ok ? 'success' : 'failure',
+			ip: ctx.ip,
+			metadata: { correlationId, fields: sfFields, error: result.ok ? undefined : result.error }
+		},
+		sql,
+		{ bestEffort: true }
+	);
+	return result.ok
+		? { changed, salesforce: 'synced', message: `${base} Pushed to the linked Salesforce contact.` }
+		: { changed, salesforce: 'failed', salesforceError: result.error, message: `${base} Saved locally, but pushing to Salesforce failed: ${result.error}. Use "Sync to Salesforce" to retry.` };
 }
 
 // ─── Account deletion ─────────────────────────────────────────────────────

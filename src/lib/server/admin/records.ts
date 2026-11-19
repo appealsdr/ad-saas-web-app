@@ -21,7 +21,11 @@ export const SF_OBJECT = { user: 'Contact', store: 'Store__c', contract: 'Servic
 const SENSITIVE = /(password|hash|token|secret|totp|mfa|encrypt|private|salt|cipher)/i;
 
 export const EDITABLE: Record<RecordKind, { name: string; label: string; type?: string }[]> = {
-	user: [{ name: 'display_name', label: 'Display name' }],
+	user: [
+		{ name: 'display_name', label: 'Display name' },
+		{ name: 'email', label: 'Email', type: 'email' },
+		{ name: 'username', label: 'Username' }
+	],
 	store: [
 		{ name: 'name', label: 'Store name' }, { name: 'marketplaces', label: 'Marketplaces (; separated)' },
 		{ name: 'country', label: 'Country' }, { name: 'seller_id', label: 'Seller ID' },
@@ -43,7 +47,8 @@ export const SPEC: Record<RecordKind, Group[]> = {
 	user: [
 		{ title: 'Identity', fields: [
 			{ key: 'display_name', label: 'Display name', own: 'sf', api: 'Contact.FirstName / LastName' },
-			{ key: 'email', label: 'Email', own: 'local', note: 'sign-in email' },
+			{ key: 'email', label: 'Email', own: 'sf', api: 'Contact.Email', note: 'sign-in email' },
+			{ key: 'username', label: 'Username', own: 'local' },
 			{ key: 'role', label: 'Customer role', own: 'local' },
 			{ key: 'is_active', label: 'Active', own: 'local' },
 			{ key: 'must_reset_password', label: 'Must reset password', own: 'local' },
