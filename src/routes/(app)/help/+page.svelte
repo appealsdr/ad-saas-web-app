@@ -204,7 +204,7 @@
 		<h3 id="pay">How to pay</h3>
 		<ol>
 			<li>From the <strong>Dashboard</strong>, click <strong>View &amp; pay →</strong> on an Outstanding Payment — or open <strong>Payments</strong> and click <strong>Pay</strong> on a Ready-to-pay invoice.</li>
-			<li>On the <strong>Pay balance</strong> screen, check the amount. A <strong>card processing fee</strong> (charged by Stripe) is shown as a separate line so you can see the exact total before you pay. Click <em>View full contract details</em> to see what the payment covers.</li>
+			<li>On the <strong>Pay balance</strong> screen, check the amount. If you pay by <strong>credit or debit card</strong>, a <strong>card processing fee</strong> (charged by Stripe) is shown as a separate line so you can see the exact total before you pay. Other payment methods, such as bank transfer, have <strong>no fee</strong>. Click <em>View full contract details</em> to see what the payment covers.</li>
 			<li>Choose your payment method and enter your details on the secure Stripe form.</li>
 			<li>Click the pay button. You'll see a confirmation page, and the invoice changes to <strong>Paid</strong>.</li>
 		</ol>
@@ -222,8 +222,8 @@
 
 			<dt>Can I add my teammates?</dt>
 			<dd>Yes — an owner or admin can add them under <strong>Accounts → Account Team → + Add Team Member</strong>. See <a href="#team">How to add a team member</a>.</dd>
-			<dt>Why is there a processing fee when I pay?</dt>
-			<dd>Card payments carry a processing fee charged by Stripe. It is shown as its own line on the pay screen before you confirm.</dd>
+			<dt>Is there a fee when I pay?</dt>
+			<dd>Only card payments carry a processing fee, charged by Stripe and shown on its own line before you confirm. Other payment methods, such as bank transfer, have no fee.</dd>
 			<dt>Why can't I pay one of my invoices?</dt>
 			<dd>Balances for deposit services are paid after the case is completed. They show as <em>Not Active</em> until then.</dd>
 

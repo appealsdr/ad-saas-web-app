@@ -1,7 +1,8 @@
 /**
  * Stripe processing fee pass-through.
  *
- * Stripe charges us a fee on every card payment; we pass it on to the client so we don't absorb it.
+ * Stripe charges us a fee on every card payment; we pass it on to the client for CARD payments only (AD-1952).
+ * All other payment methods carry no fee — the company absorbs that cost (see $lib/payments/fees).
  * The fee is GROSSED UP so that after Stripe takes its cut we still net the base price:
  *   total = (base + fixed) / (1 - percent)      fee = total - base
  *
@@ -26,8 +27,8 @@ export function stripeFeeCents(baseCents: number): number {
 }
 
 /**
- * Fee for the payment method the client selected. Card/Link use the env-configured rate above (so
- * STRIPE_FEE_PERCENT=0 still switches the surcharge off); other methods use the per-method table.
+ * Fee for the payment method the client selected. Only card carries a fee (env-configured rate above, so
+ * STRIPE_FEE_PERCENT=0 still switches the surcharge off); every other method is fee-free.
  */
 export function feeForMethod(baseCents: number, method: string | null | undefined): FeeBreakdown {
 	const pct = num(env.STRIPE_FEE_PERCENT, 2.9) / 100;
