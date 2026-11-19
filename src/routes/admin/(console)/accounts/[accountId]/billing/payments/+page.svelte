@@ -50,8 +50,8 @@
 					{@const st = PAY[p.status]}
 					<tr>
 						<td><a class="adm-mono" href="{base}/billing/payments/{encodeURIComponent(p.key)}" title="Open payment">{p.name}</a>{#if p.sfId}<div class="adm-mono adm-muted">{p.sfId}</div>{/if}</td>
-						<td><a class="adm-mono" href="{base}/records/contract/{p.contractId}">{p.contractRef}</a></td>
-						<td>{p.storeName ?? '—'}</td>
+						<td>{#if p.contractSource === 'app'}<a class="adm-mono" href="{base}/records/contract/{p.contractId}">{p.contractRef}</a>{:else}<span class="adm-mono" title="Contract exists in Salesforce only">{p.contractRef}</span>{/if}</td>
+						<td>{p.storeName ?? 'Account-wide'}</td>
 						<td>{p.kind}</td>
 						<td><strong>{money(p.amount)}</strong></td>
 						<td>{fmtD(p.date)}</td>
