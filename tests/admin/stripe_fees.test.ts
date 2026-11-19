@@ -22,13 +22,18 @@ describe('per-method Stripe fee', () => {
 	it('card matches the env-driven pass-through fee', () => {
 		expect(feeForMethod(10000, 'card').feeCents).toBe(stripeFeeCents(10000));
 	});
-	it('ACH is 0.8% grossed up and capped at $5', () => {
-		expect(computeFee(10000, 'us_bank_account').feeCents).toBe(81);
-		expect(computeFee(100000, 'us_bank_account').feeCents).toBe(500);
+	it('only card carries a fee; every other method is free (company absorbs it)', () => {
+		for (const m of ['us_bank_account', 'link', 'cashapp', 'affirm', 'klarna', 'afterpay_clearpay', 'something_new']) {
+			const f = computeFee(100000, m);
+			expect(f.feeCents, m).toBe(0);
+			expect(f.totalCents, m).toBe(100000);
+		}
+		expect(computeFee(10000, 'card').feeCents).toBeGreaterThan(0);
 	});
-	it('unknown methods fall back to card; total = base + fee', () => {
-		const f = computeFee(5000, 'something_new');
+	it('no method selected yet defaults to the card fee; total = base + fee', () => {
+		const f = computeFee(5000, null);
 		expect(f.method).toBe('card');
 		expect(f.totalCents).toBe(5000 + f.feeCents);
+		expect(feeForMethod(5000, 'us_bank_account').feeCents).toBe(0);
 	});
 });

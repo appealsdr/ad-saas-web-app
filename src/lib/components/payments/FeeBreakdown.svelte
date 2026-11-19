@@ -12,10 +12,10 @@
 
 <ul class="fees" class:updating>
 	<li><span>{baseLabel}</span><strong>{money(fee.baseCents)}</strong></li>
-	<li><span>{fee.label}</span><strong>{money(fee.feeCents)}</strong></li>
+	{#if fee.feeCents > 0}<li><span>{fee.label}</span><strong>{money(fee.feeCents)}</strong></li>{/if}
 	<li class="total"><span>Total charged</span><strong>{money(fee.totalCents)}</strong></li>
 </ul>
-<p class="note">The processing fee depends on the payment method you choose below.</p>
+<p class="note">A card processing fee applies to card payments only. Other payment methods have no fee.</p>
 
 <style>
 	.fees { list-style: none; margin: 16px 0 6px; padding: 0; border: 1px solid var(--grey-line); border-radius: 12px; background: #fafafa; transition: opacity .15s; }

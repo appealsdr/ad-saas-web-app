@@ -168,7 +168,7 @@
 		{:else if clientSecret && stripe}
 			<Elements {stripe} {clientSecret} bind:elements>
 				<form on:submit|preventDefault={handleSubmit}>
-					<p class="fee-hint">The processing fee above updates to match the payment method you choose.</p>
+					<p class="fee-hint">A card processing fee applies to card payments only; other payment methods have no fee.</p>
 					<PaymentElement onchange={onMethodChange} />
 					{#if formError}
 						<div class="alert alert-error" style="margin-top:14px">{formError}</div>
