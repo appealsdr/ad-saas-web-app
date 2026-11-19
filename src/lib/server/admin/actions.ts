@@ -20,8 +20,9 @@ import { sql } from '../db';
 import { recordAudit, type AuditActor } from './audit';
 import { getAccount, getAccountUser } from './accounts';
 import { setRequestAccount } from './request_context';
-import { updateSalesforceAccount } from '../salesforce/records';
+import { updateSalesforceAccount, updateSalesforceContact } from '../salesforce/records';
 import { sendPasswordChangedEmail, sendPasswordResetEmail, sendWelcomeSetupLinkEmail } from '../salesforce/email';
+import { splitFullName } from '../salesforce/sync';
 import { logError, describeError } from '../error_log';
 import { hashPassword } from '../auth/password';
 import { generateTempPassword } from '../auth/temp_password';
@@ -474,6 +475,146 @@ export async function createAccountUser(
 		return { message: `User ${email} created, but the setup email could not be delivered. Use "Reset password (email link)" to try again, or set a temporary password.`, userId };
 	}
 	return { message: `User ${email} created. A one-time setup link (valid 7 days) was emailed to them.`, userId };
+}
+
+// ─── Customer user profile edit (username / email / display name) ────────
+
+/**
+ * username is local-only (no Salesforce field for it). email and display_name
+ * are shared: the local row is updated, then pushed to the linked Salesforce
+ * Contact (Email / FirstName+LastName) via updateSalesforceContact. Mirrors
+ * the account-edit pattern in updateAccountFields.
+ */
+export const USER_FIELD_OWNERSHIP = {
+	username: 'local',
+	email: 'salesforce-synced',
+	display_name: 'salesforce-synced'
+} as const;
+export type EditableUserField = keyof typeof USER_FIELD_OWNERSHIP;
+export const EDITABLE_USER_FIELDS = Object.keys(USER_FIELD_OWNERSHIP) as EditableUserField[];
+
+const USERNAME_RE = /^[a-zA-Z0-9_.-]{3,50}$/;
+
+export interface UserEditResult {
+	changed: EditableUserField[];
+	salesforce: 'not_applicable' | 'not_linked' | 'synced' | 'failed';
+	salesforceError?: string;
+	message: string;
+}
+
+export async function updateUserFields(
+	ctx: Ctx,
+	accountId: string,
+	userId: string,
+	input: Partial<Record<EditableUserField, string>>
+): Promise<UserEditResult> {
+	setRequestAccount(accountId);
+	const [current] = await sql<
+		{ id: string; email: string; display_name: string | null; username: string | null; sfdc_contact_id: string | null; is_staff: boolean }[]
+	>`
+		SELECT u.id, u.email, u.display_name, u.username, u.sfdc_contact_id, (ps.user_id IS NOT NULL) AS is_staff
+		FROM users u LEFT JOIN platform_staff ps ON ps.user_id = u.id
+		WHERE u.id = ${userId} AND u.account_id = ${accountId}
+	`;
+	if (!current) throw new ActionError('User not found in this account.', 404);
+	if (current.is_staff) throw new ActionError('Platform staff are managed under Staff, not here.', 403);
+
+	const next: Partial<Record<EditableUserField, string | null>> = {};
+	const changed: EditableUserField[] = [];
+	for (const f of EDITABLE_USER_FIELDS) {
+		if (!(f in input)) continue;
+		let v = (input[f] ?? '').toString().trim();
+		if (f === 'email') {
+			v = v.toLowerCase();
+			if (!EMAIL_RE.test(v) || v.length > 254) throw new ActionError('Enter a valid email address.', 422);
+		} else if (f === 'username') {
+			if (v && !USERNAME_RE.test(v)) throw new ActionError('Username must be 3–50 characters: letters, numbers, dot, underscore or hyphen.', 422);
+		} else if (f === 'display_name') {
+			if (!v) throw new ActionError('Display name is required.', 422);
+			if (v.length > 200) throw new ActionError('Display name is too long.', 422);
+		}
+		const value = v === '' ? null : v;
+		const currentValue = f === 'email' ? current.email : f === 'username' ? current.username : current.display_name;
+		if (value !== (currentValue ?? null)) {
+			next[f] = value;
+			changed.push(f);
+		}
+	}
+	if (!changed.length) throw new ActionError('No changes to save.', 422);
+
+	if (changed.includes('email') && next.email) {
+		const newEmail = next.email;
+		const [dupe] = await sql<{ id: string }[]>`SELECT id FROM users WHERE email = ${newEmail} AND id != ${userId}`;
+		if (dupe) throw new ActionError('A user with that email already exists.', 409);
+	}
+	if (changed.includes('username') && next.username) {
+		const [dupe] = await sql<{ id: string }[]>`SELECT id FROM users WHERE lower(username) = ${next.username.toLowerCase()} AND id != ${userId}`;
+		if (dupe) throw new ActionError('That username is already taken.', 409);
+	}
+
+	const diff = Object.fromEntries(changed.map((f) => [f, { from: f === 'email' ? current.email : f === 'username' ? current.username : current.display_name, to: next[f] ?? null }]));
+
+	await sql.begin(async (tx) => {
+		const set = { ...next } as Record<string, string | null>;
+		try {
+			await tx`UPDATE users SET ${tx(set, ...Object.keys(set))} WHERE id = ${userId} AND account_id = ${accountId}`;
+		} catch (e) {
+			if ((e as { code?: string })?.code === '23505') throw new ActionError('That email or username is already taken.', 409);
+			throw e;
+		}
+		await recordAudit(
+			{
+				actor: ctx.actor,
+				action: 'user.update',
+				targetType: 'user',
+				targetId: userId,
+				targetAccountId: accountId,
+				outcome: 'success',
+				ip: ctx.ip,
+				metadata: { changes: diff, ownership: Object.fromEntries(changed.map((f) => [f, USER_FIELD_OWNERSHIP[f]])) }
+			},
+			tx
+		);
+	});
+
+	const sfFields = changed.filter((f) => USER_FIELD_OWNERSHIP[f] === 'salesforce-synced');
+	const base = `Saved${sfFields.length ? '' : ' (local only — nothing here is synced to Salesforce)'}.`;
+	if (!sfFields.length) return { changed, salesforce: 'not_applicable', message: base };
+	if (!current.sfdc_contact_id) {
+		return { changed, salesforce: 'not_linked', message: `${base} This user has no linked Salesforce contact, so nothing was pushed — use "Create in Salesforce" first.` };
+	}
+
+	const correlationId = randomUUID();
+	await recordAudit(
+		{ actor: ctx.actor, action: 'user.salesforce_sync', targetType: 'user', targetId: userId, targetAccountId: accountId, outcome: 'pending', ip: ctx.ip, metadata: { correlationId, fields: sfFields } },
+		sql,
+		{ bestEffort: true }
+	);
+	const patch: { Email?: string; FirstName?: string | null; LastName?: string } = {};
+	if (sfFields.includes('email')) patch.Email = next.email!;
+	if (sfFields.includes('display_name')) {
+		const { firstName, lastName } = splitFullName(next.display_name ?? current.display_name ?? current.email);
+		patch.FirstName = firstName ?? null;
+		patch.LastName = lastName;
+	}
+	const result = await updateSalesforceContact(current.sfdc_contact_id, patch, { userId, accountId });
+	await recordAudit(
+		{
+			actor: ctx.actor,
+			action: 'user.salesforce_sync',
+			targetType: 'user',
+			targetId: userId,
+			targetAccountId: accountId,
+			outcome: result.ok ? 'success' : 'failure',
+			ip: ctx.ip,
+			metadata: { correlationId, fields: sfFields, error: result.ok ? undefined : result.error }
+		},
+		sql,
+		{ bestEffort: true }
+	);
+	return result.ok
+		? { changed, salesforce: 'synced', message: `${base} Pushed to the linked Salesforce contact.` }
+		: { changed, salesforce: 'failed', salesforceError: result.error, message: `${base} Saved locally, but pushing to Salesforce failed: ${result.error}. Use "Sync to Salesforce" to retry.` };
 }
 
 // ─── Account deletion ─────────────────────────────────────────────────────
