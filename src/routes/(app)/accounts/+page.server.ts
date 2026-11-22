@@ -671,6 +671,10 @@ export const actions: Actions = {
 			return fail(403, { contactError: 'The account owner cannot be removed.' });
 		}
 
+		if (target.user_id) {
+			const [integ] = await sql<{ n: number }[]>`SELECT count(*)::int AS n FROM integration_clients WHERE default_user_id = ${target.user_id}`;
+			if (integ?.n) return fail(409, { contactError: 'This user is the default user of an API integration. Ask support to change it first.' });
+		}
 		await sql.begin(async (tx) => {
 			if (target.user_id) {
 				await tx`DELETE FROM users WHERE id = ${target.user_id} AND role <> 'owner'`;

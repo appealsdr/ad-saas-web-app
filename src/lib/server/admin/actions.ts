@@ -719,6 +719,8 @@ export async function deleteAccountCascade(
 		}
 		// users.account_id is SET NULL, not CASCADE — delete explicitly (this also
 		// cascades sessions, reset tokens, password history, OAuth links, ...).
+		// integration_clients.default_user_id is ON DELETE RESTRICT — remove the account's API integrations first.
+		await tx`DELETE FROM integration_clients WHERE account_id = ${accountId}`;
 		await tx`DELETE FROM users WHERE account_id = ${accountId}`;
 		// accounts cascade: stores → documents/oauth states, service_contracts →
 		// line items, account_contacts, ai_chat_messages.

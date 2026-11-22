@@ -92,6 +92,7 @@ export const DELETE: RequestHandler = async ({ request, url }) => {
 
 		// users.account_id is ON DELETE SET NULL (not cascade) — delete them
 		// explicitly so no orphaned users are left behind.
+		await tx`DELETE FROM integration_clients WHERE account_id = ${accountId}`; // default_user_id is RESTRICT
 		await tx`DELETE FROM users WHERE account_id = ${accountId}`;
 
 		const [account] = await tx<{ id: string; name: string; sfdc_account_id: string | null }[]>`
