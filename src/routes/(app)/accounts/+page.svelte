@@ -5,6 +5,7 @@
 	import { page } from '$app/stores';
 	import PlansOverlay from '$lib/components/account/PlansOverlay.svelte';
 	import PasswordInput from '$lib/components/ui/PasswordInput.svelte';
+	import ConversationPanel from '$components/messages/ConversationPanel.svelte';
 	import type { PageData, ActionData } from './$types';
 
 	export let data: PageData;
@@ -209,6 +210,23 @@
 				{/if}
 			</div>
 		</div>
+	</div>
+
+	<!-- ── Account-level messages (independent of Store and Case conversations) ── -->
+	<div class="account-messages" id="account-messages">
+		{#await data.accountConversation}
+			<ConversationPanel loading title="Account messages" tone="navy" scopeBadge="All stores" idPrefix="acct-msg" height={620} />
+		{:then conversation}
+			<ConversationPanel
+				{conversation}
+				title="Account messages"
+				tone="navy"
+				scopeBadge="General · not tied to a store or case"
+				scopeSubtitle={data.localAccount?.name ?? null}
+				idPrefix="acct-msg"
+				height={620}
+			/>
+		{/await}
 	</div>
 </div>
 
@@ -518,6 +536,7 @@
 	.plan-renews.ending { color: #b45309; font-weight: 700; }
 	.chev { font-size: 16px; color: var(--grey-text); }
 
+	.account-messages { margin-top: 20px; }
 	.grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 20px; align-items: stretch; }
 	.card {
 		background: white; border: 1px solid var(--grey-line); border-radius: 12px;

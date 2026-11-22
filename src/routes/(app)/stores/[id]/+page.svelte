@@ -4,6 +4,7 @@
 	import Topbar from '$components/layout/Topbar.svelte';
 	import RequiredFiles from '$components/files/RequiredFiles.svelte';
 	import CaseStepsCell from '$components/cases/CaseStepsCell.svelte';
+	import ConversationPanel from '$components/messages/ConversationPanel.svelte';
 	import type { PageData, ActionData } from './$types';
 
 	export let data: PageData;
@@ -432,6 +433,22 @@
 			</table>
 		{/if}
 		{/if}
+	</div>
+
+	<!-- ── Store-level messages (independent of Account and Case conversations) ── -->
+	<div id="store-messages" style="margin-bottom:20px">
+		{#await data.storeConversation}
+			<ConversationPanel loading title="Store messages" scopeBadge="This store only" idPrefix="store-msg" height={620} />
+		{:then conversation}
+			<ConversationPanel
+				{conversation}
+				title="Store messages"
+				scopeBadge="This store only"
+				scopeSubtitle={data.store.name}
+				idPrefix="store-msg"
+				height={620}
+			/>
+		{/await}
 	</div>
 </div>
 

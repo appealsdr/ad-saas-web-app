@@ -1,7 +1,8 @@
 /**
  * Notifications for the topbar bell:
- *   - unread Case_Message__c rows (Message_Read__c empty), excluding the
- *     signed-in user's own messages
+ *   - unread App Messages (Case_Message__c, Message_Read__c empty) from all three
+ *     contexts — Case, Store and Account — excluding the signed-in user's own
+ *     messages. A context that fails to load is skipped; the rest still return.
  *   - "activities required by customer" — pending Case_File__c
  *     (required-file) rows — across every case/store in the account.
  */
@@ -12,12 +13,13 @@ import {
 	listRequiredFilesForStores,
 	listRequiredFilesForCases,
 	listCasesForStores,
-	listRecentMessagesForCases
+	listRecentAppMessagesForContexts
 } from '$lib/server/salesforce';
+import { aggregateMessageNotifications } from '$lib/server/messages/notifications';
 
 const NOTIFICATION_LIMIT = 4;
 const CASE_SCAN_LIMIT = 200;
-const MESSAGE_SCAN_LIMIT = 50;
+const MESSAGE_SCAN_LIMIT = 100; // per context
 
 interface StoreRow {
 	id: string;
@@ -28,8 +30,12 @@ interface StoreRow {
 export const GET: RequestHandler = async ({ locals }) => {
 	if (!locals.user) return json({ items: [], total: 0 });
 
-	const [user] = await sql<{ account_id: string | null; sfdc_contact_id: string | null }[]>`
-		SELECT account_id, sfdc_contact_id FROM users WHERE id = ${locals.user.id} LIMIT 1
+	const [user] = await sql<
+		{ account_id: string | null; sfdc_contact_id: string | null; sfdc_account_id: string | null }[]
+	>`
+		SELECT u.account_id, u.sfdc_contact_id, COALESCE(a.sfdc_account_id, u.sfdc_account_id) AS sfdc_account_id
+		FROM users u LEFT JOIN accounts a ON a.id = u.account_id
+		WHERE u.id = ${locals.user.id} LIMIT 1
 	`;
 	if (!user?.account_id) return json({ items: [], total: 0 });
 
@@ -52,15 +58,25 @@ export const GET: RequestHandler = async ({ locals }) => {
 	);
 	const caseIds = cases.map((c) => c.Id);
 
-	const [storeFilesResult, caseFilesResult, messagesResult] = await Promise.all([
+	const scanCaseIds = caseIds.slice(0, CASE_SCAN_LIMIT);
+	const unreadOnly = { unreadOnly: true };
+	const failed = { ok: false as const, error: 'unavailable' };
+	const [storeFilesResult, caseFilesResult, caseMsgs, storeMsgs, accountMsgs] = await Promise.all([
 		sfdcStoreIds.length
 			? listRequiredFilesForStores(sfdcStoreIds)
 			: Promise.resolve({ ok: true as const, files: [] }),
 		caseIds.length
 			? listRequiredFilesForCases(caseIds.slice(0, CASE_SCAN_LIMIT))
 			: Promise.resolve({ ok: true as const, files: [] }),
-		caseIds.length
-			? listRecentMessagesForCases(caseIds.slice(0, CASE_SCAN_LIMIT), MESSAGE_SCAN_LIMIT, ctx)
+		// Each message context is fetched independently so one failure can't hide the others.
+		scanCaseIds.length
+			? listRecentAppMessagesForContexts('Case', scanCaseIds, MESSAGE_SCAN_LIMIT, ctx, unreadOnly).catch(() => failed)
+			: Promise.resolve({ ok: true as const, messages: [] }),
+		sfdcStoreIds.length
+			? listRecentAppMessagesForContexts('Store__c', sfdcStoreIds, MESSAGE_SCAN_LIMIT, ctx, unreadOnly).catch(() => failed)
+			: Promise.resolve({ ok: true as const, messages: [] }),
+		user.sfdc_account_id
+			? listRecentAppMessagesForContexts('Account', [user.sfdc_account_id], MESSAGE_SCAN_LIMIT, ctx, unreadOnly).catch(() => failed)
 			: Promise.resolve({ ok: true as const, messages: [] })
 	]);
 
@@ -94,21 +110,16 @@ export const GET: RequestHandler = async ({ locals }) => {
 			});
 		}
 	}
-	if (messagesResult.ok) {
-		for (const m of messagesResult.messages) {
-			if (m.messageRead) continue; // already read
-			if (user.sfdc_contact_id && m.senderContactId === user.sfdc_contact_id) continue; // own message
-			const store = caseStoreById.get(m.caseId) ?? null;
-			const author = m.displayName ?? m.senderContactName ?? m.createdByName ?? 'Someone';
-			items.push({
-				id: m.Id,
-				title: `New message from ${author}`,
-				subtitle: `Case ${m.caseNumber}${store ? ` · ${store.name}` : ''}`,
-				href: store ? `/stores/${store.id}/issues/${m.caseId}` : '/issues',
-				createdAt: m.createdAt
-			});
-		}
-	}
+	items.push(
+		...aggregateMessageNotifications({
+			case: caseMsgs.ok ? caseMsgs.messages : undefined,
+			store: storeMsgs.ok ? storeMsgs.messages : undefined,
+			account: accountMsgs.ok ? accountMsgs.messages : undefined,
+			currentContactId: user.sfdc_contact_id,
+			storeBySfdcId,
+			caseStoreById
+		})
+	);
 
 	items.sort((a, b) => {
 		const ta = a.createdAt ? new Date(a.createdAt).getTime() : 0;
