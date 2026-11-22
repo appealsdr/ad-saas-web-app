@@ -1,7 +1,8 @@
 /** /api/v1/stores — GET (stores.list), POST (stores.create). Permissions never imply one another. */
 import type { RequestHandler } from './$types';
 import { sql } from '$lib/server/db';
-import { apiRoute, apiJson, readJsonObject, optStr, parsePaging } from '$lib/server/integrations/http';
+import { apiRoute, apiJson, readJsonObject, parsePaging } from '$lib/server/integrations/http';
+import { validateStoreFields } from '$lib/server/integrations/store_fields';
 import { ApiError } from '$lib/server/integrations/errors';
 import { hashRequest, readIdempotencyKey, withIdempotency } from '$lib/server/integrations/idempotency';
 import { STORE_COLUMNS, type ApiStore } from '$lib/server/integrations/resources';
@@ -9,8 +10,6 @@ import { storeJson } from '$lib/server/integrations/serializers';
 import { createSalesforceStore } from '$lib/server/salesforce';
 import { getDefaultStorePointOfContactId } from '$lib/server/account/contacts';
 import { logError, describeError } from '$lib/server/error_log';
-
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export const GET: RequestHandler = apiRoute(
 	{ permission: 'stores.list', operation: 'stores.list', resourceType: 'store' },
@@ -24,25 +23,6 @@ export const GET: RequestHandler = apiRoute(
 		return apiJson({ data: rows.map(storeJson), paging: { limit, offset } });
 	}
 );
-
-export function validateStoreFields(body: Record<string, unknown>, requireName: boolean) {
-	const name = optStr(body, 'name', 200);
-	if (requireName && !name) throw new ApiError(422, 'VALIDATION_ERROR', 'name is required.');
-	if (name === null) throw new ApiError(422, 'VALIDATION_ERROR', 'name cannot be empty.');
-	const sellerPrimaryEmail = optStr(body, 'sellerPrimaryEmail', 254);
-	const storeEmail = optStr(body, 'storeEmail', 254);
-	for (const [k, v] of [['sellerPrimaryEmail', sellerPrimaryEmail], ['storeEmail', storeEmail]] as const) {
-		if (v && !EMAIL_RE.test(v)) throw new ApiError(422, 'VALIDATION_ERROR', `${k} is not a valid email address.`);
-	}
-	return {
-		name,
-		sellerPrimaryEmail,
-		storeEmail,
-		businessName: optStr(body, 'businessName', 200),
-		country: optStr(body, 'country', 100),
-		description: optStr(body, 'description', 2000)
-	};
-}
 
 export const POST: RequestHandler = apiRoute(
 	{ permission: 'stores.create', operation: 'stores.create', resourceType: 'store' },
