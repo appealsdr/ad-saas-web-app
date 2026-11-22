@@ -6,7 +6,7 @@ import { ApiError } from '$lib/server/integrations/errors';
 import { STORE_COLUMNS, requireIntegrationStore, type ApiStore } from '$lib/server/integrations/resources';
 import { storeJson } from '$lib/server/integrations/serializers';
 import { updateSalesforceStore } from '$lib/server/salesforce';
-import { validateStoreFields } from '../+server';
+import { validateStoreFields } from '$lib/server/integrations/store_fields';
 
 export const GET: RequestHandler = apiRoute(
 	{ permission: 'stores.read', operation: 'stores.read', resourceType: 'store' },

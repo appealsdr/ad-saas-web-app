@@ -260,3 +260,18 @@ d('multi-integration API', async () => {
 		expect(await codeOf(requireIntegrationPermission(req(rawKey), 'stores.list'))).toBe('INVALID_CREDENTIAL');
 	});
 });
+
+describe('route modules', () => {
+	it('every /api/v1 +server.ts exports only names SvelteKit accepts (otherwise the route 500s at runtime)', async () => {
+		const { readdirSync, readFileSync, statSync } = await import('node:fs');
+		const { join } = await import('node:path');
+		const walk = (d: string): string[] => readdirSync(d).flatMap((f) => (statSync(join(d, f)).isDirectory() ? walk(join(d, f)) : [join(d, f)]));
+		const files = walk(join(import.meta.dirname, '..', '..', 'src', 'routes', 'api', 'v1')).filter((f) => f.endsWith('+server.ts'));
+		expect(files.length).toBeGreaterThanOrEqual(7);
+		const allowed = new Set(['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS', 'HEAD', 'fallback', 'prerender', 'trailingSlash', 'config', 'entries']);
+		for (const f of files) {
+			const names = [...readFileSync(f, 'utf8').matchAll(/^export\s+(?:async\s+)?(?:const|function|let|class)\s+(\w+)/gm)].map((m) => m[1]);
+			for (const n of names) expect(allowed.has(n) || n.startsWith('_'), `${f} exports "${n}"`).toBe(true);
+		}
+	});
+});

@@ -16,10 +16,10 @@ export const GET: RequestHandler = apiRoute(
 		audit.resourceType = 'store';
 		audit.resourceId = storeId;
 		const store = await requireIntegrationStore(principal.accountId, storeId);
-		if (!store.sfdc_store_id) return apiJson({ data: [], paging: { limit: 0, offset: 0 } });
+		const { limit, offset } = parsePaging(event.url);
+		if (!store.sfdc_store_id) return apiJson({ data: [], paging: { limit, offset, total: 0 } });
 		const res = await listCasesForStore(store.sfdc_store_id, { accountId: principal.accountId });
 		if (!res.ok) throw new ApiError(502, 'UPSTREAM_ERROR', 'Could not load cases right now.');
-		const { limit, offset } = parsePaging(event.url);
 		return apiJson({ data: res.cases.slice(offset, offset + limit).map(caseSummaryJson), paging: { limit, offset, total: res.cases.length } });
 	}
 );
