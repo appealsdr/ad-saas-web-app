@@ -294,6 +294,10 @@ export async function mergeAccounts(ctx: Ctx, survivorId: string, sourceId: stri
 				activityMoved = rows.length;
 			}
 
+			// 7b. The source's API integrations act as users that just moved accounts: disable them (admins re-create on the survivor).
+			await tx`UPDATE integration_clients SET status = 'disabled', disabled_at = now(), disable_reason = 'Account merged', updated_at = now()
+			         WHERE account_id = ${sourceId} AND status <> 'disabled'`;
+
 			// 8. Retire the source and record the merge
 			await tx`UPDATE accounts SET merged_into_account_id = ${survivorId}, merged_at = now() WHERE id = ${sourceId}`;
 			const moved = {
