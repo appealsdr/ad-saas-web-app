@@ -1,16 +1,13 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
-	import { tick, onMount } from 'svelte';
 	import Topbar from '$components/layout/Topbar.svelte';
 	import CaseTimeline from '$components/cases/CaseTimeline.svelte';
-	import RichTextEditor from '$components/ui/RichTextEditor.svelte';
+	import ConversationPanel from '$components/messages/ConversationPanel.svelte';
 	import RequiredFiles from '$components/files/RequiredFiles.svelte';
 	import type { PageData, ActionData } from './$types';
 
 	export let data: PageData;
 	export let form: ActionData;
-
-	let posting = false;
 
 	// ── Onboarding information (Case.Case_Onboarding__c config) ──
 	let editingOnboarding = false;
@@ -28,46 +25,6 @@
 		return v === null || v === '' ? '—' : String(v);
 	}
 	let recalculating = false;
-	let commentInput = '';
-	let commentSearch = '';
-	let commentsListEl: HTMLDivElement;
-	let composerFormEl: HTMLFormElement;
-
-	// ── Reply-to-message ──
-	type Msg = (typeof data.messages)[number];
-	let replyingTo: Msg | null = null;
-	function startReply(m: Msg) {
-		replyingTo = m;
-		showMessageModal = false;
-		tick().then(() => composerFormEl?.querySelector<HTMLElement>('.rte-editor')?.focus());
-	}
-	function cancelReply() {
-		replyingTo = null;
-	}
-
-	// ── Read tracking — Message_Read__c ──
-	// Messages come from the server load, so a locally-marked-read message
-	// needs a client-side override until the next full reload picks up the
-	// server value. `justReadIds` also drives the 5s unread→read color fade.
-	let readOverrides = new Set<string>();
-	function messageRead(m: Msg): boolean {
-		return !!m.messageRead || readOverrides.has(m.Id);
-	}
-	function isUnread(m: Msg): boolean {
-		return !messageRead(m) && !isMine(m);
-	}
-	async function markRead(m: Msg) {
-		if (messageRead(m) || isMine(m)) return;
-		readOverrides = new Set(readOverrides).add(m.Id); // triggers the CSS fade immediately
-		try {
-			const body = new FormData();
-			body.set('messageId', m.Id);
-			await fetch('?/mark_read', { method: 'POST', body });
-		} catch {
-			// Best-effort — a failed mark-read isn't worth surfacing to the user.
-		}
-	}
-
 	// ── Status → mockup badge classes ──
 	const STATUS_BADGE: Record<string, string> = {
 		'new': 'badge-orange',
@@ -108,38 +65,6 @@
 		return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 	}
 
-	// ── Avatar initials + color ──
-	function initials(name: string | null): string {
-		if (!name) return '??';
-		const parts = name.trim().split(/\s+/);
-		return ((parts[0]?.[0] ?? '') + (parts[parts.length - 1]?.[0] ?? '')).toUpperCase() || '??';
-	}
-	function isInternal(senderType: string | null): boolean {
-		return !!senderType && senderType.toLowerCase().includes('internal');
-	}
-	function avatarColor(senderType: string | null, mine: boolean): string {
-		if (mine) return 'var(--green)';
-		// Internal = our team (navy); external = client side (blue).
-		return isInternal(senderType) ? 'var(--navy-soft)' : 'var(--blue)';
-	}
-
-	// ── Message detail modal ──
-	let showMessageModal = false;
-	let selectedMessage: Msg | null = null;
-	function openMessage(m: Msg) {
-		selectedMessage = m;
-		showMessageModal = true;
-		markRead(m);
-	}
-	function closeMessage() {
-		showMessageModal = false;
-		selectedMessage = null;
-	}
-	function msgAuthor(m: Msg): string {
-		return m.displayName ?? m.senderContactName ?? m.createdByName ?? 'Unknown';
-	}
-
-
 	// ── Estimated Revenue at Risk — Case.Estimated_Revenue_at_Risk__c ──
 	$: revenueAtRisk = data.case.estimatedRevenueAtRisk ?? 0;
 
@@ -149,48 +74,6 @@
 	$: onboardingPending = !!onboarding && !onboarding.provided;
 	$: stepsTotal = data.requiredFiles.length + (onboarding ? 1 : 0);
 	$: stepsDone = uploadedFiles.length + (onboarding?.provided ? 1 : 0);
-
-
-	$: isMine = (m: { senderContactId: string | null }) =>
-		!!data.currentUser.sfdcContactId && data.currentUser.sfdcContactId === m.senderContactId;
-
-	$: sortedMessages = [...data.messages].sort(
-		(a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
-	);
-	$: messageById = new Map(sortedMessages.map((m) => [m.Id, m]));
-	function repliedMessage(m: Msg): Msg | null {
-		return m.replyToMessageId ? (messageById.get(m.replyToMessageId) ?? null) : null;
-	}
-	function truncateBody(text: string, max = 80): string {
-		const plain = text.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
-		return plain.length > max ? `${plain.slice(0, max - 1)}…` : plain;
-	}
-
-	$: filteredMessages = (() => {
-		const q = commentSearch.trim().toLowerCase();
-		if (!q) return sortedMessages;
-		return sortedMessages.filter((m) => {
-			const author = (m.displayName ?? m.senderContactName ?? m.createdByName ?? '').toLowerCase();
-			const body = (m.body ?? '').toLowerCase();
-			return author.includes(q) || body.includes(q);
-		});
-	})();
-
-	async function scrollCommentsToBottom(smooth = false) {
-		await tick();
-		if (!commentsListEl) return;
-		commentsListEl.scrollTo({
-			top: commentsListEl.scrollHeight,
-			behavior: smooth ? 'smooth' : 'auto'
-		});
-	}
-
-	onMount(() => {
-		scrollCommentsToBottom();
-	});
-
-	$: messageCount = data.messages.length;
-	$: messageCount, scrollCommentsToBottom();
 </script>
 
 <svelte:head><title>{data.case.CaseNumber} — Appeals Doctor</title></svelte:head>
@@ -203,7 +86,6 @@
 </Topbar>
 
 <div class="content-area">
-	{#if form?.commentSuccess}<div class="alert alert-success" style="margin-bottom:14px">{form.commentSuccess}</div>{/if}
 	{#if form?.revenueRiskSuccess}<div class="alert alert-success" style="margin-bottom:14px">{form.revenueRiskSuccess}</div>{/if}
 	{#if form?.revenueRiskError}<div class="alert alert-error" style="margin-bottom:14px">{form.revenueRiskError}</div>{/if}
 	{#if form?.uploadSuccess}<div class="alert alert-success" style="margin-bottom:14px">{form.uploadSuccess}</div>{/if}
@@ -345,133 +227,15 @@
 
 	<div class="case-detail-grid">
 		<div class="grid-col">
-			<!-- ── Comments & Updates card ──────────────────────── -->
-			<div class="card msg-card">
-				<div class="msg-head">
-					<h2 class="msg-title">Messages</h2>
-				</div>
-
-				{#if data.messagesError}
-					<div class="alert alert-error" style="margin:10px 14px">{data.messagesError}</div>
-				{/if}
-
-				<div class="msg-search">
-					<input
-						type="search"
-						class="comment-search"
-						placeholder="Search messages…"
-						bind:value={commentSearch}
-						aria-label="Search messages"
-					/>
-				</div>
-
-				<div class="msg-list" id="comments-list" bind:this={commentsListEl}>
-					{#each filteredMessages as m (m.Id)}
-						{@const mine = isMine(m)}
-						{@const author = msgAuthor(m)}
-						{@const internal = isInternal(m.senderType)}
-						{@const parent = repliedMessage(m)}
-						<div
-							class="msg-row"
-							class:internal
-							class:unread={isUnread(m)}
-							role="button"
-							tabindex="0"
-							title="Open message"
-							on:click={() => openMessage(m)}
-							on:keydown={(e) => {
-								if (e.key === 'Enter' || e.key === ' ') {
-									e.preventDefault();
-									openMessage(m);
-								}
-							}}
-						>
-							<div class="msg-avatar" style="background:{avatarColor(m.senderType, mine)}">
-								{initials(author)}
-							</div>
-							<div class="msg-content">
-								<div class="msg-meta">
-									<span class="msg-sender">{author}{mine ? ' (You)' : ''}</span>
-									{#if internal}
-										<span class="msg-badge badge-internal">Internal</span>
-									{:else}
-										<span class="msg-badge badge-external">External</span>
-									{/if}
-									<span class="msg-time">{fmtDateTime(m.createdAt)}</span>
-									<button
-										type="button"
-										class="msg-reply-btn"
-										data-mutates
-										on:click|stopPropagation={() => startReply(m)}
-									>
-										↩ Reply
-									</button>
-								</div>
-								{#if parent}
-									<div class="msg-quote">
-										<span class="msg-quote-author">{msgAuthor(parent)}</span>
-										<span class="msg-quote-text">{truncateBody(parent.body ?? '')}</span>
-									</div>
-								{/if}
-								<div class="msg-body">{@html m.body ?? ''}</div>
-							</div>
-						</div>
-					{:else}
-						<p class="comments-empty">
-							{#if commentSearch.trim()}
-								No messages match "{commentSearch.trim()}".
-							{:else}
-								No messages yet — start the conversation below.
-							{/if}
-						</p>
-					{/each}
-				</div>
-
-				<form
-					class="msg-composer"
-					method="POST"
-					action="?/post_comment"
-					bind:this={composerFormEl}
-					use:enhance={() => {
-						posting = true;
-						return ({ update, result }) => {
-							posting = false;
-							update().then(() => {
-								if (result.type === 'success') {
-									commentInput = '';
-									replyingTo = null;
-									scrollCommentsToBottom(true);
-								}
-							});
-						};
-					}}
-				>
-					{#if replyingTo}
-						{@const parent = replyingTo}
-						<div class="reply-preview">
-							<div class="reply-preview-text">
-								<span class="reply-preview-lbl">Replying to {msgAuthor(parent)}</span>
-								<span class="reply-preview-body">{truncateBody(parent.body ?? '')}</span>
-							</div>
-							<button type="button" class="reply-preview-x" on:click={cancelReply} aria-label="Cancel reply">✕</button>
-						</div>
-					{/if}
-					<RichTextEditor
-						bind:value={commentInput}
-						placeholder="Write a message…"
-					/>
-					<input type="hidden" name="body" value={commentInput} />
-					<input type="hidden" name="replyToMessageId" value={replyingTo?.Id ?? ''} />
-					<div class="composer-actions">
-						<button type="submit" class="btn btn-primary btn-sm" disabled={posting}>
-							{posting ? 'Sending…' : 'Send'}
-						</button>
-					</div>
-					{#if form?.commentError}
-						<div class="alert alert-error" style="margin-top:8px;margin-bottom:0">{form.commentError}</div>
-					{/if}
-				</form>
-			</div>
+			<!-- ── Messages card (shared conversation component, Case context) ── -->
+			<ConversationPanel
+				conversation={data.conversation}
+				title="Messages"
+				scopeSubtitle={`Case ${data.case.CaseNumber}`}
+				postAction="?/post_message"
+				readAction="?/mark_read"
+				idPrefix="case-msg"
+			/>
 		</div>
 
 		<!-- ═══════════════════ RIGHT COLUMN ═══════════════════ -->
@@ -507,51 +271,6 @@
 
 	<CaseTimeline events={data.timeline} historyError={data.historyError} />
 </div>
-
-{#if showMessageModal && selectedMessage}
-	{@const m = selectedMessage}
-	{@const mine = isMine(m)}
-	{@const author = msgAuthor(m)}
-	{@const internal = isInternal(m.senderType)}
-	<div class="msg-modal-overlay" on:click={closeMessage} role="presentation">
-		<div
-			class="msg-modal"
-			on:click|stopPropagation
-			role="dialog"
-			aria-modal="true"
-			aria-label="Message"
-			tabindex="-1"
-		>
-			<header class="msg-modal-head">
-				<h3>Message</h3>
-				<button type="button" class="msg-modal-x" on:click={closeMessage} aria-label="Close">✕</button>
-			</header>
-			<div class="msg-modal-body">
-				<div class="msg-modal-meta">
-					<div class="msg-avatar lg" style="background:{avatarColor(m.senderType, mine)}">
-						{initials(author)}
-					</div>
-					<div>
-						<div class="msg-meta">
-							<span class="msg-sender">{author}{mine ? ' (You)' : ''}</span>
-							{#if internal}
-								<span class="msg-badge badge-internal">Internal</span>
-							{:else}
-								<span class="msg-badge badge-external">External</span>
-							{/if}
-						</div>
-						<div class="msg-time">{fmtDateTime(m.createdAt)}</div>
-					</div>
-				</div>
-				<div class="msg-modal-text">{@html m.body ?? ''}</div>
-			</div>
-			<footer class="msg-modal-foot">
-				<button type="button" class="btn btn-outline btn-sm" on:click={closeMessage}>Close</button>
-				<button type="button" class="btn btn-primary btn-sm" data-mutates on:click={() => startReply(m)}>↩ Reply</button>
-			</footer>
-		</div>
-	</div>
-{/if}
 
 <style>
 	.file-link {
@@ -674,156 +393,6 @@
 	.badge-grey   { background: #e5e7eb; color: #374151; }
 	.link-badge { border: none; cursor: pointer; }
 	.link-badge:hover { background: #d1d5db; }
-
-	/* ── Comments (mockup classes) ───────────────────────────── */
-	/* ── Messages card (LWC-style, app colors) ───────────────── */
-	.msg-card {
-		display: flex;
-		flex-direction: column;
-		height: 560px;
-		padding: 0;
-		overflow: hidden;
-	}
-	.msg-head {
-		padding: 12px 14px;
-		border-bottom: 1px solid var(--grey-line);
-		flex-shrink: 0;
-	}
-	.msg-title { font-size: 14px; font-weight: 800; color: var(--navy); margin: 0; }
-	.msg-search {
-		padding: 10px 14px;
-		border-bottom: 1px solid var(--grey-line);
-		flex-shrink: 0;
-	}
-	.comment-search {
-		width: 100%; box-sizing: border-box;
-		border: 1.5px solid var(--grey-line); border-radius: 9px;
-		padding: 8px 12px; font-size: 13px; outline: none;
-		transition: border-color .2s; font-family: inherit;
-	}
-	.comment-search:focus { border-color: var(--orange); }
-
-	.msg-list { flex: 1; min-height: 0; overflow-y: auto; padding: 4px 0; }
-	.comments-empty {
-		color: var(--grey-text); font-size: 13px; margin: 0;
-		padding: 16px; text-align: center;
-	}
-
-	.msg-row {
-		display: flex; gap: 10px; align-items: flex-start;
-		padding: 8px 14px; cursor: pointer;
-		transition: background-color .15s;
-	}
-	.msg-row:hover, .msg-row:focus { background: var(--grey-bg); outline: none; }
-	.msg-row.internal { background: rgba(27, 43, 75, .035); }
-	.msg-row.internal:hover, .msg-row.internal:focus { background: var(--grey-bg); }
-
-	/* Unread messages — highlighted, fading back to normal over ~5s once read. */
-	.msg-row.unread {
-		background: #fff7e0;
-		transition: background-color 5s ease;
-	}
-	.msg-row.unread:hover, .msg-row.unread:focus { background: #fdecc4; }
-
-	.msg-reply-btn {
-		margin-left: auto; background: none; border: none; cursor: pointer;
-		font-size: 11px; font-weight: 600; color: var(--grey-text);
-		padding: 1px 4px; border-radius: 5px; opacity: 0; transition: opacity .12s, color .12s;
-	}
-	.msg-row:hover .msg-reply-btn, .msg-row:focus-within .msg-reply-btn { opacity: 1; }
-	.msg-reply-btn:hover { color: var(--orange); }
-
-	.msg-quote {
-		display: flex; gap: 6px; align-items: baseline; margin-bottom: 3px;
-		padding-left: 8px; border-left: 2px solid var(--grey-line);
-		font-size: 11px; color: var(--grey-text); overflow: hidden;
-	}
-	.msg-quote-author { font-weight: 700; flex-shrink: 0; }
-	.msg-quote-text { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-
-	.msg-avatar {
-		width: 30px; height: 30px; border-radius: 8px; flex-shrink: 0; margin-top: 1px;
-		display: flex; align-items: center; justify-content: center;
-		font-size: 11px; font-weight: 700; color: #fff;
-	}
-	.msg-avatar.lg { width: 38px; height: 38px; font-size: 13px; }
-
-	.msg-content { min-width: 0; flex: 1; }
-	.msg-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; margin-bottom: 2px; }
-	.msg-sender { font-size: 13px; font-weight: 700; color: var(--navy); }
-	.msg-time { font-size: 11px; color: var(--grey-text); white-space: nowrap; }
-	.msg-badge {
-		font-size: 10px; font-weight: 700; line-height: 1;
-		padding: 2px 6px; border-radius: 10px;
-		text-transform: uppercase; letter-spacing: .03em;
-	}
-	.badge-internal { background: rgba(27, 43, 75, .10); color: var(--navy); }
-	.badge-external { background: var(--blue-lt); color: var(--blue); }
-	.msg-body {
-		font-size: 13px; line-height: 1.4; color: var(--navy-dark);
-		word-break: break-word; white-space: normal;
-	}
-	.msg-body :global(ul), .msg-body :global(ol) {
-		margin: 4px 0; padding-left: 22px;
-	}
-
-	.msg-composer {
-		flex-shrink: 0; border-top: 1px solid var(--grey-line);
-		padding: 10px 14px 12px;
-	}
-	.reply-preview {
-		display: flex; align-items: center; gap: 8px;
-		background: var(--grey-bg); border-left: 3px solid var(--orange);
-		border-radius: 6px; padding: 6px 10px; margin-bottom: 8px;
-	}
-	.reply-preview-text { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 1px; }
-	.reply-preview-lbl { font-size: 11px; font-weight: 700; color: var(--orange-dk, var(--orange)); }
-	.reply-preview-body {
-		font-size: 12px; color: var(--grey-text);
-		white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-	}
-	.reply-preview-x {
-		background: none; border: none; cursor: pointer; color: var(--grey-text);
-		font-size: 13px; flex-shrink: 0; padding: 2px 4px;
-	}
-	.reply-preview-x:hover { color: #b91c1c; }
-	.comment-box {
-		width: 100%; box-sizing: border-box;
-		border: 1.5px solid var(--grey-line); border-radius: 9px;
-		padding: 10px 13px; font-size: 13px; resize: none; height: 64px;
-		outline: none; transition: border-color .2s; font-family: inherit;
-	}
-	.comment-box:focus { border-color: var(--orange); }
-	.composer-actions { display: flex; justify-content: flex-end; margin-top: 8px; }
-
-	/* ── Message detail modal ────────────────────────────────── */
-	.msg-modal-overlay {
-		position: fixed; inset: 0; background: rgba(15, 23, 42, .55);
-		display: flex; align-items: center; justify-content: center;
-		z-index: 1000; padding: 24px;
-	}
-	.msg-modal {
-		background: #fff; border-radius: 12px; width: min(560px, 100%);
-		max-height: 85vh; display: flex; flex-direction: column;
-		overflow: hidden; box-shadow: var(--shadow-xl);
-	}
-	.msg-modal-head {
-		display: flex; align-items: center; justify-content: space-between;
-		padding: 14px 18px; border-bottom: 1px solid var(--grey-line);
-	}
-	.msg-modal-head h3 { margin: 0; font-size: 16px; font-weight: 800; color: var(--navy); }
-	.msg-modal-x { background: none; border: none; font-size: 16px; cursor: pointer; color: var(--grey-text); line-height: 1; }
-	.msg-modal-body { padding: 18px; overflow: auto; }
-	.msg-modal-meta { display: flex; gap: 12px; align-items: flex-start; margin-bottom: 14px; }
-	.msg-modal-text {
-		font-size: 14px; line-height: 1.5; color: var(--navy-dark);
-		white-space: pre-wrap; word-break: break-word;
-		border-top: 1px solid var(--grey-line); padding-top: 14px;
-	}
-	.msg-modal-text :global(ul), .msg-modal-text :global(ol) {
-		margin: 4px 0; padding-left: 22px;
-	}
-	.msg-modal-foot { padding: 12px 18px; border-top: 1px solid var(--grey-line); display: flex; justify-content: flex-end; gap: 8px; }
 
 	/* ── Documents (mockup-style doc-item) ───────────────────── */
 	.doc-item {

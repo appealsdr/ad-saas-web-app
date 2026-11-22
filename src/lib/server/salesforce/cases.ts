@@ -1,9 +1,15 @@
 /**
- * Salesforce Case + Case_Message__c helpers.
+ * Salesforce Case helpers (+ Case-scoped compatibility wrappers for App Messages).
  *
  * Cases are read-only from this app — sellers can browse them and post
- * comments, but the Case itself is created elsewhere (Salesforce, SP-API,
+ * messages, but the Case itself is created elsewhere (Salesforce, SP-API,
  * Slack flow, etc.).
+ *
+ * Messages (Case_Message__c) now support Case, Account and Store contexts —
+ * the context-aware implementation lives in ./app-messages.ts; the
+ * listCaseMessages / createCaseMessage / markCaseMessageRead /
+ * listRecentMessagesForCases exports below are thin Case-only wrappers kept so
+ * existing consumers (public API v1, dashboard) keep working.
  *
  * Field assumptions (rename in your org if different):
  *   - Case.Store__c                    — lookup to Store__c
@@ -20,19 +26,17 @@
  */
 import { sfdcQuery, sobjectGet, sobjectCreate, sobjectUpdate, SalesforceApiError } from './client';
 import { logError } from '../error_log';
+import {
+	listAppMessages,
+	createAppMessage,
+	markAppMessageRead,
+	listRecentAppMessagesForContexts
+} from './app-messages';
+import type { AppMessage, AppMessageWithContext } from '$lib/types/app-message';
 import type { CaseTimelineEvent, CaseTimelineEventType } from '$lib/types/case-timeline';
 export type { CaseTimelineEvent, CaseTimelineEventType } from '$lib/types/case-timeline';
 
 const CASE_STORE_FIELD = 'Store__c'; // Case → Store__c lookup
-const CM_CASE_FIELD = 'Case__c';     // Case_Message__c → Case lookup
-const CM_FIELDS = {
-	senderContact: 'Sender_Contact__c',
-	body: 'Message_Body__c',
-	senderType: 'Sender_Type__c',
-	replyTo: 'Reply_To_Message__c',
-	read: 'Message_Read__c'
-};
-const SENDER_TYPE_EXTERNAL = 'external';
 
 // ── Case_File__c (required-file checklist) ──
 const CASE_FILE_OBJECT = 'Case_File__c';
@@ -91,45 +95,8 @@ interface CaseDetailRow extends CaseRow {
 	ASIN__c: string | null;
 }
 
-export interface CaseMessage {
-	Id: string;
-	body: string | null;
-	senderType: string | null;
-	senderContactId: string | null;
-	/** From Sender_Contact__r.Name — the linked Contact, if any. */
-	senderContactName: string | null;
-	/** From CreatedBy.Name — the Salesforce User who saved the record. Always present. */
-	createdByName: string | null;
-	createdById: string | null;
-	/**
-	 * Best display name for the comment author. Prefers the linked Contact,
-	 * falls back to the Salesforce User who created the record. Null only if
-	 * both reads were null (shouldn't happen — every SF record has a CreatedBy).
-	 */
-	displayName: string | null;
-	createdAt: string;
-	/** Reply_To_Message__c — Id of the message this one replies to, if any. */
-	replyToMessageId: string | null;
-	/** Message_Read__c — when the recipient read this message, or null if unread. */
-	messageRead: string | null;
-}
-
-interface CaseMessageRow {
-	Id: string;
-	Message_Body__c: string | null;
-	Sender_Type__c: string | null;
-	Sender_Contact__c: string | null;
-	Sender_Contact__r: { Name: string } | null;
-	CreatedById: string | null;
-	CreatedBy: { Name: string } | null;
-	CreatedDate: string;
-	Reply_To_Message__c: string | null;
-	Message_Read__c: string | null;
-}
-
-function resolveDisplayName(row: CaseMessageRow): string | null {
-	return row.Sender_Contact__r?.Name ?? row.CreatedBy?.Name ?? null;
-}
+/** Case-scoped alias of the context-neutral AppMessage (kept for compatibility). */
+export type CaseMessage = AppMessage;
 
 // ─── List Cases for a store ─────────────────────────────────────────────
 
@@ -366,55 +333,16 @@ export async function findCaseStoreLookup(
 	}
 }
 
-// ─── Case messages (comments) ───────────────────────────────────────────
+// ─── Case messages — compatibility wrappers over App Messages ───────────
 
+type SfRequestContext = { userId?: string; accountId?: string };
+
+/** Messages assigned directly to one Case. See ./app-messages.ts for other contexts. */
 export async function listCaseMessages(
 	caseId: string,
-	context: { userId?: string; accountId?: string } = {}
+	context: SfRequestContext = {}
 ): Promise<{ ok: true; messages: CaseMessage[] } | { ok: false; error: string }> {
-	const escaped = caseId.replace(/'/g, "''");
-	const senderContactRel = CM_FIELDS.senderContact.replace('__c', '__r');
-	const soql = `
-		SELECT Id, ${CM_FIELDS.body}, ${CM_FIELDS.senderType},
-		       ${CM_FIELDS.senderContact}, ${senderContactRel}.Name,
-		       CreatedById, CreatedBy.Name,
-		       CreatedDate, ${CM_FIELDS.replyTo}, ${CM_FIELDS.read}
-		FROM Case_Message__c
-		WHERE ${CM_CASE_FIELD} = '${escaped}'
-		ORDER BY CreatedDate ASC
-		LIMIT 500
-	`.trim();
-	try {
-		const result = await sfdcQuery<CaseMessageRow>(soql, { paginate: true });
-		const messages = result.records.map(
-			(r): CaseMessage => ({
-				Id: r.Id,
-				body: r.Message_Body__c,
-				senderType: r.Sender_Type__c,
-				senderContactId: r.Sender_Contact__c,
-				senderContactName: r.Sender_Contact__r?.Name ?? null,
-				createdById: r.CreatedById,
-				createdByName: r.CreatedBy?.Name ?? null,
-				displayName: resolveDisplayName(r),
-				createdAt: r.CreatedDate,
-				replyToMessageId: r.Reply_To_Message__c,
-				messageRead: r.Message_Read__c
-			})
-		);
-		return { ok: true, messages };
-	} catch (e) {
-		const errorMessage = e instanceof Error ? e.message : String(e);
-		await logError({
-			source: 'salesforce.cases',
-			operation: 'list_messages',
-			userId: context.userId,
-			accountId: context.accountId,
-			errorMessage,
-			stack: e instanceof Error ? e.stack : undefined,
-			context: { caseId }
-		});
-		return { ok: false, error: errorMessage };
-	}
+	return listAppMessages({ contextType: 'Case', contextId: caseId }, context);
 }
 
 export async function createCaseMessage(
@@ -424,81 +352,26 @@ export async function createCaseMessage(
 		body: string;
 		replyToMessageId?: string | null;
 	},
-	context: { userId?: string; accountId?: string } = {}
+	context: SfRequestContext = {}
 ): Promise<{ ok: true; id: string } | { ok: false; error: string; errorCode?: string }> {
-	const payload: Record<string, unknown> = {
-		[CM_CASE_FIELD]: args.caseId,
-		[CM_FIELDS.senderContact]: args.senderContactId,
-		[CM_FIELDS.body]: args.body,
-		[CM_FIELDS.senderType]: SENDER_TYPE_EXTERNAL
-	};
-	if (args.replyToMessageId) payload[CM_FIELDS.replyTo] = args.replyToMessageId;
-	try {
-		const created = await sobjectCreate('Case_Message__c', payload);
-		if (!created.success) {
-			const error = `Salesforce Case_Message__c create returned success=false: ${JSON.stringify(created.errors)}`;
-			await logError({
-				source: 'salesforce.cases',
-				operation: 'create_message',
-				userId: context.userId,
-				accountId: context.accountId,
-				sfdcObject: 'Case_Message__c',
-				errorMessage: error,
-				context: { payload }
-			});
-			return { ok: false, error };
-		}
-		return { ok: true, id: created.id };
-	} catch (e) {
-		const isSfErr = e instanceof SalesforceApiError;
-		const errorMessage = e instanceof Error ? e.message : String(e);
-		const errorCode = isSfErr ? e.errorCode : undefined;
-		await logError({
-			source: 'salesforce.cases',
-			operation: 'create_message',
-			userId: context.userId,
-			accountId: context.accountId,
-			sfdcObject: 'Case_Message__c',
-			errorCode: errorCode ?? (isSfErr ? String(e.status) : undefined),
-			errorMessage,
-			stack: e instanceof Error ? e.stack : undefined,
-			context: { payload }
-		});
-		return { ok: false, error: errorMessage, errorCode };
-	}
+	return createAppMessage(
+		{
+			contextType: 'Case',
+			contextId: args.caseId,
+			senderContactId: args.senderContactId,
+			body: args.body,
+			replyToMessageId: args.replyToMessageId
+		},
+		context
+	);
 }
 
-/**
- * PATCH Case_Message__c.Message_Read__c to now. Idempotent — call it whenever
- * the recipient views the message; re-marking an already-read message just
- * bumps the timestamp.
- */
+/** Idempotent; see markAppMessageRead (pass a scope there to tenant-check the message). */
 export async function markCaseMessageRead(
 	messageId: string,
-	context: { userId?: string; accountId?: string } = {}
+	context: SfRequestContext = {}
 ): Promise<{ ok: true } | { ok: false; error: string; errorCode?: string }> {
-	try {
-		await sobjectUpdate('Case_Message__c', messageId, {
-			[CM_FIELDS.read]: new Date().toISOString()
-		});
-		return { ok: true };
-	} catch (e) {
-		const isSfErr = e instanceof SalesforceApiError;
-		const errorMessage = e instanceof Error ? e.message : String(e);
-		const errorCode = isSfErr ? e.errorCode : undefined;
-		await logError({
-			source: 'salesforce.cases',
-			operation: 'mark_message_read',
-			userId: context.userId,
-			accountId: context.accountId,
-			sfdcObject: 'Case_Message__c',
-			errorCode: errorCode ?? (isSfErr ? String(e.status) : undefined),
-			errorMessage,
-			stack: e instanceof Error ? e.stack : undefined,
-			context: { messageId }
-		});
-		return { ok: false, error: errorMessage, errorCode };
-	}
+	return markAppMessageRead(messageId, context);
 }
 
 // Re-export sobjectGet for callers that want to fetch other related objects.
@@ -512,67 +385,25 @@ export interface RecentCaseMessage extends CaseMessage {
 }
 
 /**
- * Recent Case_Message__c rows across MANY cases — for the account-wide
- * dashboard. Empty input → empty result, no round-trip.
+ * Recent Case messages across MANY cases (newest first) — for the account-wide
+ * dashboard and the topbar notifications (`unreadOnly`). Empty input → empty result, no round-trip.
  */
 export async function listRecentMessagesForCases(
 	caseIds: string[],
 	limit: number,
-	context: { userId?: string; accountId?: string } = {}
+	context: SfRequestContext = {},
+	options: { unreadOnly?: boolean } = {}
 ): Promise<{ ok: true; messages: RecentCaseMessage[] } | { ok: false; error: string }> {
-	if (caseIds.length === 0) return { ok: true, messages: [] };
-	const cleanLimit = Math.max(1, Math.min(50, limit | 0));
-	const literals = caseIds.map((id) => `'${id.replace(/'/g, "''")}'`).join(',');
-	const senderContactRel = CM_FIELDS.senderContact.replace('__c', '__r');
-	const soql = `
-		SELECT Id, ${CM_FIELDS.body}, ${CM_FIELDS.senderType},
-		       ${CM_FIELDS.senderContact}, ${senderContactRel}.Name,
-		       CreatedById, CreatedBy.Name,
-		       ${CM_CASE_FIELD}, ${CM_CASE_FIELD.replace('__c', '__r')}.CaseNumber,
-		       CreatedDate, ${CM_FIELDS.replyTo}, ${CM_FIELDS.read}
-		FROM Case_Message__c
-		WHERE ${CM_CASE_FIELD} IN (${literals})
-		ORDER BY CreatedDate DESC
-		LIMIT ${cleanLimit}
-	`.trim();
-	try {
-		const result = await sfdcQuery<
-			CaseMessageRow & {
-				Case__c: string;
-				Case__r: { CaseNumber: string } | null;
-			}
-		>(soql);
-		const messages = result.records.map(
-			(r): RecentCaseMessage => ({
-				Id: r.Id,
-				body: r.Message_Body__c,
-				senderType: r.Sender_Type__c,
-				senderContactId: r.Sender_Contact__c,
-				senderContactName: r.Sender_Contact__r?.Name ?? null,
-				createdById: r.CreatedById,
-				createdByName: r.CreatedBy?.Name ?? null,
-				displayName: resolveDisplayName(r),
-				createdAt: r.CreatedDate,
-				replyToMessageId: r.Reply_To_Message__c,
-				messageRead: r.Message_Read__c,
-				caseId: r.Case__c,
-				caseNumber: r.Case__r?.CaseNumber ?? ''
-			})
-		);
-		return { ok: true, messages };
-	} catch (e) {
-		const errorMessage = e instanceof Error ? e.message : String(e);
-		await logError({
-			source: 'salesforce.cases',
-			operation: 'list_recent_messages_for_cases',
-			userId: context.userId,
-			accountId: context.accountId,
-			errorMessage,
-			stack: e instanceof Error ? e.stack : undefined,
-			context: { caseCount: caseIds.length }
-		});
-		return { ok: false, error: errorMessage };
-	}
+	const res = await listRecentAppMessagesForContexts('Case', caseIds, limit, context, options);
+	if (!res.ok) return { ok: false, error: res.error };
+	return {
+		ok: true,
+		messages: res.messages.map((m: AppMessageWithContext) => ({
+			...m,
+			caseId: m.contextId,
+			caseNumber: m.caseNumber ?? ''
+		}))
+	};
 }
 
 export interface PendingCaseFile extends CaseFile {

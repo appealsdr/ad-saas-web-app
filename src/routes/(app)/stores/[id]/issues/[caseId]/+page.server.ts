@@ -4,13 +4,13 @@
  * Loaded in parallel:
  *   - Local store (tenancy + SF Store Id)
  *   - SF Case (read-only)
- *   - SF Case_Message__c rows (comments)
+ *   - SF Case_Message__c rows scoped to this Case (App Messages, Case context)
  *   - SF Case_File__c rows (required-file checklist) joined with local
  *     case_documents on sfdc_case_file_id → upload metadata
  *
  * Actions:
- *   post_comment  — INSERT Case_Message__c (Sender_Contact__c, Message_Body__c,
- *                                           Sender_Type__c='external')
+ *   post_message  — INSERT Case_Message__c with ONLY Case__c set (alias: post_comment)
+ *   mark_read     — Message_Read__c = now, only for messages of this Case
  *   upload_doc    — for ONE required file slot, one or many files: each is PUT to
  *                   S3 → INSERTed as a local row → registered as an S3_Document__c
  *                   (the newest becomes Required_File__c.Last_Version__c).
@@ -18,15 +18,12 @@
  *                   slot. When the slot ends up empty, Required_File__c is reset.
  */
 import { fail, redirect, error } from '@sveltejs/kit';
-import type { Actions, PageServerLoad } from './$types';
+import type { Action, Actions, PageServerLoad } from './$types';
 import { randomUUID } from 'node:crypto';
 import { basename } from 'node:path';
 import { sql } from '$lib/server/db';
 import {
 	fetchCase,
-	listCaseMessages,
-	createCaseMessage,
-	markCaseMessageRead,
 	listRequiredFilesForCase,
 	attachUploadToRequiredFile,
 	clearRequiredFile,
@@ -40,7 +37,13 @@ import {
 } from '$lib/server/salesforce';
 import { putObject, deleteObject, getRegion } from '$lib/server/storage/s3';
 import { caseFileKey } from '$lib/server/storage/s3-paths';
-import { sanitizeMessageHtml, htmlToText } from '$lib/server/sanitize';
+import { htmlToText } from '$lib/server/sanitize';
+import {
+	resolveCaseScope,
+	loadConversationSafe,
+	postConversationMessage,
+	markConversationRead
+} from '$lib/server/messages/conversation';
 import { logError, describeError } from '$lib/server/error_log';
 import { getStoreAccessToken } from '$lib/server/spapi';
 import { getAsinAverageDailyRevenue } from '$lib/server/spapi_reports';
@@ -133,10 +136,16 @@ export const load: PageServerLoad = async ({ params, locals }) => {
 	if (!store) throw error(404, 'Store not found.');
 
 	const ctx = { userId: locals.user.id, accountId: store.account_id };
-	const [caseResult, onboarding, messagesResult, filesResult, historyResult, uploads, storeMetrics] = await Promise.all([
+	// Tenant check + messages: the Case's Store__c must match this (owned) store.
+	const user = locals.user;
+	const scopePromise = resolveCaseScope(user, params.id, params.caseId);
+	const conversationPromise = scopePromise.then((scope) =>
+		scope ? loadConversationSafe(scope, user) : null
+	);
+	const [caseResult, onboarding, conversation, filesResult, historyResult, uploads, storeMetrics] = await Promise.all([
 		fetchCase(params.caseId, ctx),
 		fetchCaseOnboarding(params.caseId, ctx),
-		listCaseMessages(params.caseId, ctx),
+		conversationPromise,
 		listRequiredFilesForCase(params.caseId),
 		listCaseHistory(params.caseId, ctx),
 		sql<LocalUploadRow[]>`
@@ -158,6 +167,7 @@ export const load: PageServerLoad = async ({ params, locals }) => {
 				})
 	]);
 
+	if (!conversation) throw error(404, 'Case not found.');
 	if (!caseResult.ok) {
 		if (caseResult.notFound) throw error(404, 'Case not found in Salesforce.');
 		throw error(502, `Could not load case: ${caseResult.error}`);
@@ -217,13 +227,9 @@ export const load: PageServerLoad = async ({ params, locals }) => {
 		};
 	});
 
-	// Sanitize message HTML once — the page renders bodies with {@html}, so
-	// every message (new or SF-authored) must be cleaned before it reaches the
-	// browser. The timeline gets a plain-text variant (it renders text, not HTML).
-	const messages = (messagesResult.ok ? messagesResult.messages : []).map((m) => ({
-		...m,
-		body: sanitizeMessageHtml(m.body)
-	}));
+	// Message bodies are already sanitized by loadConversation (the page renders them
+	// with {@html}). The timeline gets a plain-text variant (it renders text, not HTML).
+	const messages = conversation.messages;
 
 	const timeline = buildCaseTimeline({
 		caseRecord: caseResult.record,
@@ -250,8 +256,7 @@ export const load: PageServerLoad = async ({ params, locals }) => {
 		storeTotalSaved: storeMetrics.totalRevenueRecovered,
 		case: caseResult.record,
 		onboarding,
-		messages,
-		messagesError: messagesResult.ok ? null : messagesResult.error,
+		conversation,
 		requiredFiles,
 		filesError: filesResult.ok ? null : filesResult.error,
 		timeline,
@@ -262,6 +267,16 @@ export const load: PageServerLoad = async ({ params, locals }) => {
 			sfdcContactId: locals.user.sfdcContactId ?? null
 		}
 	};
+};
+
+const postCaseMessage: Action = async ({ request, params, locals }) => {
+	if (!locals.user) throw redirect(303, '/login');
+	const scope = await resolveCaseScope(locals.user, params.id, params.caseId);
+	if (!scope) throw error(404, 'Case not found.');
+
+	const result = await postConversationMessage(scope, locals.user, await request.formData());
+	if (!result.ok) return fail(result.status, { messageError: result.error, messageBody: result.body });
+	return { messageSuccess: 'Message sent.' };
 };
 
 export const actions: Actions = {
@@ -292,55 +307,21 @@ export const actions: Actions = {
 		return { onboardingSuccess: 'Onboarding information saved.' };
 	},
 
-	post_comment: async ({ request, params, locals }) => {
-		if (!locals.user) throw redirect(303, '/login');
-		const store = await loadStore(params.id, locals.user.id);
-		if (!store) throw error(404, 'Store not found.');
+	/** Post a message to THIS Case only (App Message, Case context). */
+	post_message: postCaseMessage,
+	/** Back-compat alias for the previous action name. */
+	post_comment: postCaseMessage,
 
-		const data = await request.formData();
-		const rawBody = String(data.get('body') ?? '');
-		const body = sanitizeMessageHtml(rawBody); // strip unsafe HTML before storing
-		const text = htmlToText(body); // plain text for the empty check
-		const replyToMessageId = String(data.get('replyToMessageId') ?? '').trim() || null;
-		if (!text) return fail(400, { commentBody: rawBody, commentError: 'Comment cannot be empty.' });
-		if (body.length > 32000)
-			return fail(400, { commentBody: rawBody, commentError: 'Comment is too long.' });
-
-		const [row] = await sql<{ sfdc_contact_id: string | null }[]>`
-			SELECT sfdc_contact_id FROM users WHERE id = ${locals.user.id} LIMIT 1
-		`;
-		if (!row?.sfdc_contact_id) {
-			return fail(409, {
-				commentBody: body,
-				commentError: 'Your Salesforce Contact is not linked yet. Try again once sync completes.'
-			});
-		}
-
-		const result = await createCaseMessage(
-			{ caseId: params.caseId, senderContactId: row.sfdc_contact_id, body, replyToMessageId },
-			{ userId: locals.user.id, accountId: store.account_id }
-		);
-		if (!result.ok) {
-			return fail(502, { commentBody: body, commentError: `Salesforce rejected the comment: ${result.error}` });
-		}
-		return { commentSuccess: 'Comment posted.' };
-	},
-
-	/** Mark a single Case_Message__c as read (Message_Read__c = now). */
+	/** Mark a single message of this Case as read (Message_Read__c = now). */
 	mark_read: async ({ request, params, locals }) => {
 		if (!locals.user) throw redirect(303, '/login');
-		const store = await loadStore(params.id, locals.user.id);
-		if (!store) throw error(404, 'Store not found.');
+		const scope = await resolveCaseScope(locals.user, params.id, params.caseId);
+		if (!scope) throw error(404, 'Case not found.');
 
 		const data = await request.formData();
 		const messageId = String(data.get('messageId') ?? '').trim();
-		if (!messageId) return fail(400, { readError: 'Missing message id.' });
-
-		const result = await markCaseMessageRead(messageId, {
-			userId: locals.user.id,
-			accountId: store.account_id
-		});
-		if (!result.ok) return fail(502, { readError: result.error });
+		const result = await markConversationRead(scope, locals.user, messageId);
+		if (!result.ok) return fail(result.status, { readError: result.error });
 		return { readSuccess: true, readMessageId: messageId };
 	},
 

@@ -126,6 +126,24 @@ export type {
 } from './required-files';
 
 export {
+	listAppMessages,
+	createAppMessage,
+	markAppMessageRead,
+	messageBelongsToContext,
+	listRecentAppMessagesForContexts,
+	isValidSalesforceId,
+	validateAppMessageContext,
+	contextLookupField
+} from './app-messages';
+export type { AppMessageRequestContext, CreateAppMessageArgs } from './app-messages';
+export type {
+	AppMessage,
+	AppMessageContext,
+	AppMessageContextType,
+	AppMessageWithContext
+} from '$lib/types/app-message';
+
+export {
 	listCasesForStore,
 	listCasesForStores,
 	fetchCase,

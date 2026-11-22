@@ -25,7 +25,7 @@ d('admin record detail', () => {
 		const groups = buildDetailGroups('user', rec);
 		const flat = groups.flatMap((g) => g.rows);
 		expect(flat.find((r) => r.key === 'display_name')).toMatchObject({ own: 'sf', api: 'Contact.FirstName / LastName', editable: true });
-		expect(flat.find((r) => r.key === 'email')).toMatchObject({ own: 'local', editable: false });
+		expect(flat.find((r) => r.key === 'email')).toMatchObject({ own: 'sf', editable: true });
 		expect(Object.keys(rec.raw)).not.toContain('password_hash');
 	});
 

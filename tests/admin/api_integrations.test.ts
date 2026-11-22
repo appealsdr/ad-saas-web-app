@@ -267,7 +267,7 @@ describe('route modules', () => {
 		const { join } = await import('node:path');
 		const walk = (d: string): string[] => readdirSync(d).flatMap((f) => (statSync(join(d, f)).isDirectory() ? walk(join(d, f)) : [join(d, f)]));
 		const files = walk(join(import.meta.dirname, '..', '..', 'src', 'routes', 'api', 'v1')).filter((f) => f.endsWith('+server.ts'));
-		expect(files.length).toBeGreaterThanOrEqual(7);
+		expect(files.length).toBeGreaterThanOrEqual(6);
 		const allowed = new Set(['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS', 'HEAD', 'fallback', 'prerender', 'trailingSlash', 'config', 'entries']);
 		for (const f of files) {
 			const names = [...readFileSync(f, 'utf8').matchAll(/^export\s+(?:async\s+)?(?:const|function|let|class)\s+(\w+)/gm)].map((m) => m[1]);

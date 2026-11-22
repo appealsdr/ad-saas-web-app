@@ -21,6 +21,12 @@ import {
 	splitFullName
 } from '$lib/server/salesforce';
 import { logError, describeError } from '$lib/server/error_log';
+import {
+	resolveAccountScope,
+	loadConversationSafe,
+	postConversationMessage,
+	markConversationRead
+} from '$lib/server/messages/conversation';
 import { listSubscriptions } from '$lib/server/salesforce';
 import { getAccountSubscription } from '$lib/server/subscription';
 import { canManageAccountContacts } from '$lib/server/auth/roles';
@@ -140,7 +146,14 @@ export const load: PageServerLoad = async ({ locals }) => {
 			: Promise.resolve([{ stores: 0 }])
 	]);
 
+	// Account-level messages (Case_Message__c.Account__c). Streamed so the Account page
+	// renders immediately and the conversation panel shows its own loading state.
+	const accountConversation = resolveAccountScope(user)
+		.then((scope) => (scope ? loadConversationSafe(scope, user) : null))
+		.catch(() => null);
+
 	return {
+		accountConversation,
 		plans: {
 			categories,
 			storeCount: storeCount.stores,
@@ -225,6 +238,27 @@ export const load: PageServerLoad = async ({ locals }) => {
 };
 
 export const actions: Actions = {
+	/** Post an Account-level message (Account__c only; sender = the user's Contact). */
+	post_message: async ({ request, locals }) => {
+		if (!locals.user) throw redirect(303, '/login');
+		const scope = await resolveAccountScope(locals.user);
+		if (!scope) return fail(404, { messageError: 'Account not found.', messageBody: '' });
+		const result = await postConversationMessage(scope, locals.user, await request.formData());
+		if (!result.ok) return fail(result.status, { messageError: result.error, messageBody: result.body });
+		return { messageSuccess: 'Message sent.' };
+	},
+
+	/** Mark an Account-level message as read (only messages of this account's conversation). */
+	mark_read: async ({ request, locals }) => {
+		if (!locals.user) throw redirect(303, '/login');
+		const scope = await resolveAccountScope(locals.user);
+		if (!scope) return fail(404, { readError: 'Account not found.' });
+		const data = await request.formData();
+		const result = await markConversationRead(scope, locals.user, String(data.get('messageId') ?? '').trim());
+		if (!result.ok) return fail(result.status, { readError: result.error });
+		return { readSuccess: true };
+	},
+
 	/**
 	 * Retry creating the Salesforce Account + Contact for this user/account
 	 * when one or both sides never synced (e.g. the earlier sign-up attempt

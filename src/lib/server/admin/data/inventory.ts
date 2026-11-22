@@ -31,7 +31,7 @@ const viaUsers = (col = 'user_id'): AccountScopeFn => (id) =>
 
 export const INVENTORY: TableEntry[] = [
 	{ name: 'accounts', view: 'accounts', note: 'Customer accounts.', hidden: ['merged_into_account_id', 'merged_at'], accountScope: own('id'), accountScopeNote: 'accounts.id = account' },
-	{ name: 'users', view: 'users', note: 'Customer users. Password hash omitted.', hidden: ['password_hash', 'avatar_url', 'email_verification_pending'], accountScope: own('account_id'), accountScopeNote: 'users.account_id = account' },
+	{ name: 'users', view: 'users', note: 'Customer users. Password hash omitted.', hidden: ['password_hash', 'avatar_url', 'email_verification_pending', 'username'], accountScope: own('account_id'), accountScopeNote: 'users.account_id = account' },
 	{ name: 'account_contacts', view: 'account_contacts', note: 'Account contacts. Invite tokens omitted.', hidden: ['invite_token'], accountScope: own('account_id'), accountScopeNote: 'account_contacts.account_id = account' },
 	{ name: 'stores', view: 'stores', note: 'Stores. SP-API tokens and OAuth callback params omitted.', hidden: ['spapi_refresh_token', 'spapi_access_token', 'spapi_callback_params'], accountScope: own('account_id'), accountScopeNote: 'stores.account_id = account' },
 	{ name: 'store_documents', view: 'store_documents', note: 'Store document metadata. Storage paths omitted.', hidden: ['storage_path', 's3_bucket', 's3_key'], accountScope: viaStores, accountScopeNote: 'store_documents.store_id → stores.account_id' },

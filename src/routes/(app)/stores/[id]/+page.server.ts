@@ -34,6 +34,12 @@ import {
 import { putObject, deleteObject, getRegion } from '$lib/server/storage/s3';
 import { storeFileKey } from '$lib/server/storage/s3-paths';
 import { logError, describeError } from '$lib/server/error_log';
+import {
+	resolveStoreScope,
+	loadConversationSafe,
+	postConversationMessage,
+	markConversationRead
+} from '$lib/server/messages/conversation';
 import { canManageAccountContacts } from '$lib/server/auth/roles';
 import { ensureOwnerAccountContact, getDefaultStorePointOfContactId } from '$lib/server/account/contacts';
 import { basename } from 'node:path';
@@ -276,7 +282,15 @@ export const load: PageServerLoad = async ({ params, locals }) => {
 	});
 	const filesError = filesResult.ok ? null : filesResult.error;
 
+	// Store-level messages (Case_Message__c.Store__c). Streamed so the store page renders
+	// immediately and the conversation panel shows its own loading state.
+	const user = locals.user;
+	const storeConversation = resolveStoreScope(user, params.id)
+		.then((scope) => (scope ? loadConversationSafe(scope, user) : null))
+		.catch(() => null);
+
 	return {
+		storeConversation,
 		store: {
 			id: store.id,
 			name: store.name,
@@ -360,6 +374,27 @@ async function storeBilling(accountId: string, storeId: string) {
 }
 
 export const actions: Actions = {
+	/** Post a Store-level message (Store__c only; sender = the user's Contact). */
+	post_message: async ({ request, params, locals }) => {
+		if (!locals.user) throw redirect(303, '/login');
+		const scope = await resolveStoreScope(locals.user, params.id);
+		if (!scope) throw error(404, 'Store not found.');
+		const result = await postConversationMessage(scope, locals.user, await request.formData());
+		if (!result.ok) return fail(result.status, { messageError: result.error, messageBody: result.body });
+		return { messageSuccess: 'Message sent.' };
+	},
+
+	/** Mark a Store-level message as read (only messages of this store's conversation). */
+	mark_read: async ({ request, params, locals }) => {
+		if (!locals.user) throw redirect(303, '/login');
+		const scope = await resolveStoreScope(locals.user, params.id);
+		if (!scope) throw error(404, 'Store not found.');
+		const data = await request.formData();
+		const result = await markConversationRead(scope, locals.user, String(data.get('messageId') ?? '').trim());
+		if (!result.ok) return fail(result.status, { readError: result.error });
+		return { readSuccess: true };
+	},
+
 	edit_store: async ({ request, params, locals }) => {
 		if (!locals.user) throw redirect(303, '/login');
 		const store = await loadStore(params.id, locals.user.id);
