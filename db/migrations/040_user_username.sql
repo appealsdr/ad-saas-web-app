@@ -1,4 +1,4 @@
--- 039_user_username.sql (AD-1956)
+-- 040_user_username.sql (AD-1956)
 -- A distinct, admin-editable username field, separate from the sign-in email
 -- and the Salesforce-synced display name. Not pushed to Salesforce (there is
 -- no corresponding Contact field). Uniqueness is case-insensitive.
