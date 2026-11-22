@@ -136,6 +136,7 @@ export interface SalesforceContact {
 export interface ContactPatch {
 	FirstName?: string | null;
 	LastName?: string;
+	Email?: string;
 	Phone?: string | null;
 	/** Cleared (set null) once a temp/forced password reset is completed. */
 	Temp_Password_For_App__c?: string | null;

@@ -134,6 +134,30 @@
 			{/if}
 		</div>
 	{/if}
+
+	{#if r.kind === 'user'}
+		<div class="adm-card">
+			<h2>Login history</h2>
+			{#if !data.canViewLoginHistory}
+				<div class="adm-empty">Your role cannot view login history.</div>
+			{:else if data.loginHistory.length === 0}
+				<div class="adm-empty">No recorded logins for this user.</div>
+			{:else}
+				<p class="adm-muted" style="margin-top:0">Most recent: {$fmtT(data.loginHistory[0].at)}</p>
+				<div class="adm-table-wrap">
+					<table class="adm-table">
+						<caption class="adm-sr">Login history</caption>
+						<thead><tr><th scope="col">When</th><th scope="col">IP address</th></tr></thead>
+						<tbody>
+							{#each data.loginHistory as ev}
+								<tr><td>{$fmtT(ev.at)}</td><td class="adm-mono">{ev.ip ?? '—'}</td></tr>
+							{/each}
+						</tbody>
+					</table>
+				</div>
+			{/if}
+		</div>
+	{/if}
 </RecordDetail>
 
 {#if pwModal}

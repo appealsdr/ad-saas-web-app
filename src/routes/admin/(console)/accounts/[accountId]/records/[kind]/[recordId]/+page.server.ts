@@ -12,8 +12,10 @@ import { listAccountStores } from '$lib/server/admin/accounts';
 import { accountContracts } from '$lib/server/admin/billing';
 import { salesforceUrl, stripeUrl } from '$lib/server/admin/links';
 import { buildDetailGroups } from '$lib/server/admin/records';
-import { initiatePasswordReset, setTemporaryPassword } from '$lib/server/admin/actions';
+import { EDITABLE_USER_FIELDS, initiatePasswordReset, setTemporaryPassword, updateUserFields, type EditableUserField } from '$lib/server/admin/actions';
 import { deleteRecord, getRecord, RECORD_KINDS, SF_OBJECT, updateRecord, type RecordKind } from '$lib/server/admin/records';
+
+export interface LoginEvent { at: string; ip: string | null }
 
 export interface StoreExtra {
 	name: string; marketplaces: string | null; country: string | null; sellerId: string | null; storeEmail: string | null;
@@ -73,6 +75,9 @@ export const load: PageServerLoad = async (event) => {
 		stripePi: stripeUrl('payment', contract?.stripePi ?? (record.raw.stripe_payment_intent_id as string | null)),
 		stripeSub: stripeUrl('subscription', record.raw.stripe_subscription_id as string | null)
 	});
+	const canManageUsers = roleHas(staff.role, 'users.manage');
+	let loginHistory: LoginEvent[] = [];
+	if (kind === 'user' && canManageUsers) loginHistory = await getLoginHistory(id);
 	return {
 		groups,
 		sfObject,
@@ -87,14 +92,28 @@ export const load: PageServerLoad = async (event) => {
 		store,
 		record,
 		sfState: sfState(record.sfdcId, existing),
-		canEdit: roleHas(staff.role, 'accounts.update') && record.editable.length > 0,
+		canEdit: (kind === 'user' ? canManageUsers : roleHas(staff.role, 'accounts.update')) && record.editable.length > 0,
 		canSync: roleHas(staff.role, 'accounts.update'),
 		canDelete: roleHas(staff.role, 'accounts.delete'),
-		canManageUsers: roleHas(staff.role, 'users.manage'),
+		canManageUsers,
 		userActive: kind === 'user' ? record.raw.is_active === true : false,
-		userIsStaff: kind === 'user' ? await isStaffUser(id) : false
+		userIsStaff: kind === 'user' ? await isStaffUser(id) : false,
+		loginHistory,
+		canViewLoginHistory: canManageUsers
 	};
 };
+
+/** Successful logins only (never impersonation) — see auth/session.ts createSession. Newest first. */
+async function getLoginHistory(userId: string, limit = 25): Promise<LoginEvent[]> {
+	const rows = await sql<{ created_at: Date; ip_address: string | null }[]>`
+		SELECT created_at, host(ip_address) AS ip_address
+		FROM activity_log
+		WHERE user_id = ${userId} AND event_type = 'login'
+		ORDER BY created_at DESC
+		LIMIT ${limit}
+	`;
+	return rows.map((r) => ({ at: r.created_at.toISOString(), ip: r.ip_address }));
+}
 
 async function isStaffUser(userId: string): Promise<boolean> {
 	const [r] = await sql<{ n: number }[]>`SELECT count(*)::int AS n FROM platform_staff WHERE user_id = ${userId} AND is_active`;
@@ -132,9 +151,27 @@ export const actions: Actions = {
 	},
 	resync: resyncAction,
 	update: async (event) => {
-		const { staff, accountId } = await workspace(event, 'accounts.update');
 		const { kind, id } = parse(event.params);
 		const d = await event.request.formData();
+		if (kind === 'user') {
+			// User edits (username/email/display name) are governed by users.manage,
+			// not the generic accounts.update used for stores/contracts, and sync
+			// email/name changes to the linked Salesforce contact.
+			const { staff, accountId } = await workspace(event, 'users.manage');
+			const input: Partial<Record<EditableUserField, string>> = {};
+			for (const f of EDITABLE_USER_FIELDS) {
+				const v = d.get(f);
+				if (typeof v === 'string') input[f] = v;
+			}
+			try {
+				const r = await updateUserFields({ actor: auditActor(staff), ip: clientIp(event) }, accountId, id, input);
+				return { ok: r.message };
+			} catch (e) {
+				if (e instanceof ActionError) return fail(e.status, { error: e.message });
+				throw e;
+			}
+		}
+		const { staff, accountId } = await workspace(event, 'accounts.update');
 		const input: Record<string, string> = {};
 		for (const [k, v] of d.entries()) if (typeof v === 'string' && k !== 'version') input[k] = v;
 		try {
