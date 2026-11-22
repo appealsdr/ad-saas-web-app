@@ -208,6 +208,8 @@ export async function deleteRecord(ctx: Ctx, accountId: string, kind: RecordKind
 					SELECT u.role, (ps.user_id IS NOT NULL) AS staff FROM users u LEFT JOIN platform_staff ps ON ps.user_id = u.id WHERE u.id = ${id}`;
 				if (u?.role === 'owner') throw new ActionError('The account owner cannot be deleted. Delete the whole account instead.', 409);
 				if (u?.staff) throw new ActionError('Platform staff cannot be deleted here. Remove their staff membership first.', 409);
+				const [integ] = await tx<{ n: number }[]>`SELECT count(*)::int AS n FROM integration_clients WHERE default_user_id = ${id}`;
+				if (integ?.n) throw new ActionError('This user is the default user of an API integration. Change the integration\'s default user first.', 409);
 				await tx`DELETE FROM sessions WHERE user_id = ${id}`;
 				await tx`DELETE FROM users WHERE id = ${id} AND account_id = ${accountId}`;
 			} else if (kind === 'store') {

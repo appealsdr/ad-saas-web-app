@@ -92,8 +92,8 @@ export { VUID_FIELD, isVuidBlank, withVuidBackfill } from './vuid';
 export { createServiceContractWithLines, buildRecurringLines, recurringMonthDescription, addMonthsClamped } from './contracts';
 export type { ServiceContractInput, ServiceContractResult } from './contracts';
 
-export { createServiceCase, listCasesForContract, getCaseCustomRecordTypeId } from './service-cases';
-export type { ServiceCaseInput, ServiceCaseResult } from './service-cases';
+export { createServiceCase, createApiCase, listCasesForContract, getCaseCustomRecordTypeId } from './service-cases';
+export type { ServiceCaseInput, ServiceCaseResult, ApiCaseInput } from './service-cases';
 
 export { fetchCaseOnboarding, saveCaseOnboarding, listOnboardingStatusForCases } from './case-onboarding';
 export type { CaseOnboarding, OnboardingField, OnboardingFieldType } from './case-onboarding';

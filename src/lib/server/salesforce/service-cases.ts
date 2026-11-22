@@ -149,3 +149,57 @@ export async function listCasesForContract(
 		return { ok: false, error: errorMessage };
 	}
 }
+
+// ─── Cases opened through the public API (AD-1966) ──────────────────────
+
+export interface ApiCaseInput {
+	subject: string;
+	description: string | null;
+	priority: 'Low' | 'Medium' | 'High';
+	sfdcAccountId: string;
+	sfdcStoreId: string;
+	sfdcContactId: string | null; // the integration's default user's Contact
+}
+
+/** Create a free-form Case for a store (not tied to a service contract). */
+export async function createApiCase(
+	input: ApiCaseInput,
+	context: { userId?: string; accountId?: string } = {}
+): Promise<ServiceCaseResult> {
+	const recordTypeId = await getCaseCustomRecordTypeId();
+	const payload: Record<string, unknown> = {
+		Subject: input.subject,
+		AccountId: input.sfdcAccountId,
+		Store__c: input.sfdcStoreId,
+		Status: 'New',
+		Priority: input.priority,
+		Origin: 'API'
+	};
+	if (input.description) payload.Description = input.description;
+	if (recordTypeId) payload.RecordTypeId = recordTypeId;
+	if (input.sfdcContactId) payload.ContactId = input.sfdcContactId;
+	try {
+		const created = await sobjectCreate(CASE_OBJECT, payload);
+		if (!created.success) {
+			const error = `Case create returned success=false: ${JSON.stringify(created.errors)}`;
+			await logError({ source: 'salesforce.api_cases', operation: 'create_case', userId: context.userId, accountId: context.accountId, sfdcObject: CASE_OBJECT, errorMessage: error });
+			return { ok: false, error };
+		}
+		await createOnboardingDocsRequiredFile(created.id, context);
+		return { ok: true, id: created.id };
+	} catch (e) {
+		const isSfErr = e instanceof SalesforceApiError;
+		const errorMessage = e instanceof Error ? e.message : String(e);
+		await logError({
+			source: 'salesforce.api_cases',
+			operation: 'create_case',
+			userId: context.userId,
+			accountId: context.accountId,
+			sfdcObject: CASE_OBJECT,
+			errorCode: isSfErr ? (e.errorCode ?? String(e.status)) : undefined,
+			errorMessage,
+			stack: e instanceof Error ? e.stack : undefined
+		});
+		return { ok: false, error: errorMessage, errorCode: isSfErr ? e.errorCode : undefined };
+	}
+}
