@@ -3,6 +3,19 @@
 Companion to `docs/api-v1.md` (reference) and the admin page **Admin → API** (client-facing overview).
 Automated script: `scripts/api_v1_smoke_test.py` (Python 3.8+, standard library only).
 
+## 0. Quick check for staging and production (read-only)
+
+`scripts/api_v1_quick_check.py` makes ~8 GET requests and never writes anything, so it is safe on **production**.
+Use an integration on a real account whose profile allows the read permissions (a read-only integration is ideal).
+
+```bash
+export STAGING_API_URL=https://<staging-host> STAGING_API_KEY=adi_… STAGING_STORE_ID=<uuid>   # store id optional
+export PROD_API_URL=https://<prod-host>       PROD_API_KEY=adi_…    PROD_STORE_ID=<uuid>
+python3 scripts/api_v1_quick_check.py --env staging      # or: production | both
+```
+
+Run it right after each deploy (and after applying a migration). Use the full script below (`--write`) on staging only.
+
 ## 1. Prepare
 
 1. **Migration 039 applied** on the target database (deploys do not run migrations).
