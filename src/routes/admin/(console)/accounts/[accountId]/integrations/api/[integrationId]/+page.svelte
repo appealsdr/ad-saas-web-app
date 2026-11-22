@@ -12,7 +12,7 @@
 	$: f = (form ?? {}) as { ok?: string; error?: string; newKey?: string; retired?: number; rotated?: boolean };
 	$: i = data.integration;
 	$: values = {
-		name: i.name, defaultUserId: i.defaultUserId, permissions: [...i.permissions], allowedIps: i.allowedIps,
+		name: i.name, description: i.description ?? '', defaultUserId: i.defaultUserId, permissions: [...i.permissions], allowedIps: i.allowedIps,
 		rateLimitPerMinute: i.rateLimitPerMinute, credentialTtlDays: (i.credentialTtlDays ?? '') as number | '', rotationGraceHours: i.rotationGraceHours
 	};
 	const credState = (c: { revoked_at: Date | null; expires_at: Date | null }) =>

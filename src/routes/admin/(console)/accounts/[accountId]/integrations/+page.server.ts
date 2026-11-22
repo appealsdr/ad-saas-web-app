@@ -30,7 +30,7 @@ export const load: PageServerLoad = async (event) => {
 		localAsOf: new Date().toISOString(),
 		// Never includes a credential hash or secret — list shows prefix-free metadata only.
 		apiIntegrations: integrations.map((i) => ({
-			id: i.id, name: i.name, status: i.status, defaultUser: i.default_user_name || i.default_user_email,
+			id: i.id, name: i.name, description: i.description, status: i.status, defaultUser: i.default_user_name || i.default_user_email,
 			permissionCount: i.permissions.length, permissionTotal: INTEGRATION_PERMISSIONS.length,
 			lastUsedAt: i.last_used_at, activeCredentials: i.active_credentials
 		})),

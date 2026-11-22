@@ -28,7 +28,7 @@
 		<table class="adm-table"><thead><tr><th scope="col">Integration</th><th scope="col">Default user</th><th scope="col">Permissions</th><th scope="col">Status</th><th scope="col">Last used</th><th scope="col">Actions</th></tr></thead>
 			<tbody>{#each data.apiIntegrations as i}
 				<tr>
-					<td><a href="{base}/api/{i.id}">{i.name}</a></td>
+					<td><a href="{base}/api/{i.id}">{i.name}</a>{#if i.description}<div class="adm-muted" style="font-size:12px;font-weight:400">{i.description}</div>{/if}</td>
 					<td>{i.defaultUser ?? '—'}</td>
 					<td>{i.permissionCount} of {i.permissionTotal}</td>
 					<td><span style="background:{STATUS[i.status][0]};color:{STATUS[i.status][1]};padding:2px 8px;border-radius:99px;font-size:12px">{i.status}</span></td>

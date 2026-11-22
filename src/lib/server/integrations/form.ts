@@ -13,6 +13,7 @@ export function parseIntegrationForm(d: FormData): IntegrationInput {
 	const copy = String(d.get('copyPermissionsFromId') ?? '').trim();
 	return {
 		name: String(d.get('name') ?? ''),
+		description: String(d.get('description') ?? ''),
 		defaultUserId: String(d.get('defaultUserId') ?? ''),
 		// Unchecked boxes simply are not submitted; an empty list is rejected ("at least one").
 		permissions: d.getAll('permissions').map(String),

@@ -12,7 +12,7 @@ export const load: PageServerLoad = async (event) => {
 	const [users, integrations] = await Promise.all([listAccountUsers(accountId), listIntegrations(accountId)]);
 	return {
 		users: users.filter((u) => u.is_active).map((u) => ({ id: u.id, label: `${u.display_name || u.email} (${u.email})` })),
-		copySources: integrations.map((i) => ({ id: i.id, name: i.name })),
+		copySources: integrations.map((i) => ({ id: i.id, name: i.name, permissions: i.permissions })),
 		permissionOptions: PERMISSION_OPTIONS
 	};
 };

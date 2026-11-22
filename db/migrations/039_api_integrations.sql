@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS integration_clients (
   account_id             UUID NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
 
   name                   TEXT NOT NULL,
+  description            TEXT CHECK (description IS NULL OR char_length(description) <= 500),
 
   -- RESTRICT: a user that an integration acts as cannot be deleted silently.
   default_user_id        UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT,

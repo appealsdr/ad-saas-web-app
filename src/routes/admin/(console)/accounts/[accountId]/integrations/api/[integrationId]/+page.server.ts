@@ -27,7 +27,7 @@ export const load: PageServerLoad = async (event) => {
 	]);
 	return {
 		integration: {
-			id: integration.id, name: integration.name, status: integration.status, defaultUserId: integration.default_user_id,
+			id: integration.id, name: integration.name, description: integration.description, status: integration.status, defaultUserId: integration.default_user_id,
 			permissions: integration.permissions, allowedIps: (integration.allowed_ip_ranges ?? []).join('\n'),
 			rateLimitPerMinute: integration.rate_limit_per_minute, credentialTtlDays: integration.credential_ttl_days,
 			rotationGraceHours: integration.rotation_grace_hours, pausedAt: integration.paused_at, pauseReason: integration.pause_reason,

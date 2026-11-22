@@ -21,6 +21,7 @@ export interface IntegrationRow {
 	id: string;
 	account_id: string;
 	name: string;
+	description: string | null;
 	default_user_id: string;
 	default_user_name: string | null;
 	default_user_email: string | null;
@@ -41,7 +42,7 @@ export interface IntegrationRow {
 }
 
 const SELECT = sql`
-	SELECT i.id, i.account_id, i.name, i.default_user_id, u.display_name AS default_user_name, u.email AS default_user_email,
+	SELECT i.id, i.account_id, i.name, i.description, i.default_user_id, u.display_name AS default_user_name, u.email AS default_user_email,
 	       i.status, i.permissions, i.allowed_ip_ranges::text[] AS allowed_ip_ranges, i.rate_limit_per_minute,
 	       i.credential_ttl_days, i.rotation_grace_hours, i.paused_at, i.pause_reason, i.disabled_at, i.disable_reason,
 	       i.created_at, i.updated_at,
@@ -81,6 +82,7 @@ export const listCredentials = (integrationId: string) =>
 
 export interface IntegrationInput {
 	name: string;
+	description?: string | null;
 	defaultUserId: string;
 	permissions?: string[] | null; // null/undefined → all permissions
 	copyPermissionsFromId?: string | null;
@@ -88,6 +90,12 @@ export interface IntegrationInput {
 	rateLimitPerMinute?: number;
 	credentialTtlDays?: number | null;
 	rotationGraceHours?: number;
+}
+
+function validateDescription(raw: string | null | undefined): string | null {
+	const d = (raw ?? '').trim();
+	if (d.length > 500) throw new ActionError('Description must be 500 characters or fewer.', 422);
+	return d || null;
 }
 
 function validateName(raw: string): string {
@@ -136,6 +144,7 @@ export async function createIntegration(
 	opts: { issueCredential?: boolean } = {}
 ): Promise<{ id: string; rawKey: string | null }> {
 	const name = validateName(input.name);
+	const description = validateDescription(input.description);
 	await requireAccountUser(accountId, input.defaultUserId);
 	const s = parseSettings(input);
 
@@ -147,8 +156,9 @@ export async function createIntegration(
 		if (input.copyPermissionsFromId) {
 			const src = await getIntegration(accountId, input.copyPermissionsFromId);
 			if (!src) throw new ActionError('The integration to copy permissions from was not found on this account.', 422);
-			permissions = normalizePermissions(src.permissions);
 			copiedFrom = src.id;
+			// Without an explicit selection, copy the source's profile as-is.
+			permissions = normalizePermissions(input.permissions?.length ? input.permissions : src.permissions);
 		} else {
 			permissions = normalizePermissions(input.permissions ?? [...INTEGRATION_PERMISSIONS]);
 		}
@@ -160,9 +170,9 @@ export async function createIntegration(
 	try {
 		return await sql.begin(async (tx) => {
 			const [row] = await tx<{ id: string }[]>`
-				INSERT INTO integration_clients (account_id, name, default_user_id, permissions, allowed_ip_ranges, rate_limit_per_minute,
+				INSERT INTO integration_clients (account_id, name, description, default_user_id, permissions, allowed_ip_ranges, rate_limit_per_minute,
 				                                 credential_ttl_days, rotation_grace_hours, created_by, updated_by)
-				VALUES (${accountId}, ${name}, ${input.defaultUserId}, ${permissions}, ${s.ips.length ? s.ips : null}::cidr[], ${s.rate},
+				VALUES (${accountId}, ${name}, ${description}, ${input.defaultUserId}, ${permissions}, ${s.ips.length ? s.ips : null}::cidr[], ${s.rate},
 				        ${s.ttl}, ${s.grace}, ${ctx.actor.userId}, ${ctx.actor.userId})
 				RETURNING id`;
 			let rawKey: string | null = null;
@@ -185,6 +195,7 @@ export async function updateIntegration(ctx: Ctx, accountId: string, id: string,
 	const cur = await getIntegration(accountId, id);
 	if (!cur) throw new ActionError('Integration not found.', 404);
 	const name = validateName(input.name);
+	const description = validateDescription(input.description);
 	if (input.defaultUserId !== cur.default_user_id) await requireAccountUser(accountId, input.defaultUserId);
 	const s = parseSettings(input);
 	let permissions: IntegrationPermission[];
@@ -196,6 +207,7 @@ export async function updateIntegration(ctx: Ctx, accountId: string, id: string,
 
 	const changed: string[] = [];
 	if (name !== cur.name) changed.push('name');
+	if (description !== (cur.description ?? null)) changed.push('description');
 	if (input.defaultUserId !== cur.default_user_id) changed.push('defaultUser');
 	const diff = diffPermissions(cur.permissions, permissions);
 	if (diff.addedPermissions.length || diff.removedPermissions.length) changed.push('permissions');
@@ -209,7 +221,7 @@ export async function updateIntegration(ctx: Ctx, accountId: string, id: string,
 		await sql.begin(async (tx) => {
 			// Scoped by id AND account: a tampered id can never reach another account's integration.
 			await tx`
-				UPDATE integration_clients SET name = ${name}, default_user_id = ${input.defaultUserId}, permissions = ${permissions},
+				UPDATE integration_clients SET name = ${name}, description = ${description}, default_user_id = ${input.defaultUserId}, permissions = ${permissions},
 				       allowed_ip_ranges = ${s.ips.length ? s.ips : null}::cidr[], rate_limit_per_minute = ${s.rate},
 				       credential_ttl_days = ${s.ttl}, rotation_grace_hours = ${s.grace}, updated_by = ${ctx.actor.userId}
 				WHERE id = ${id} AND account_id = ${accountId}`;
