@@ -1,6 +1,9 @@
 <script lang="ts">
 	import { page } from '$app/stores';
 	import { auth, userInitials } from '$stores/auth';
+	import { notifications, refreshNotifications } from '$stores/notifications';
+	import { onMount } from 'svelte';
+	import { afterNavigate } from '$app/navigation';
 
 	// Services are purchased per-store now (under /stores/<id>/services), so
 	// there's no global Services tab in the sidebar.
@@ -15,6 +18,15 @@
 	];
 
 	$: currentPath = $page.url.pathname;
+
+	// Unread App Messages → red count on the Messages tab (same look as the bell).
+	$: unreadMessages = $notifications.messages;
+	onMount(() => {
+		refreshNotifications();
+	});
+	afterNavigate(() => {
+		refreshNotifications();
+	});
 
 	function isActive(href: string) {
 		return currentPath === href || currentPath.startsWith(href + '/');
@@ -38,7 +50,12 @@
 				class:active={isActive(item.href)}
 				aria-current={isActive(item.href) ? 'page' : undefined}
 			>
-				<img class="nav-icon" src={item.icon} alt="" aria-hidden="true" />
+				<span class="nav-icon-wrap">
+					<img class="nav-icon" src={item.icon} alt="" aria-hidden="true" />
+					{#if item.href === '/messages' && unreadMessages > 0}
+						<span class="nav-count" aria-label="{unreadMessages} unread messages">{unreadMessages > 9 ? '9+' : unreadMessages}</span>
+					{/if}
+				</span>
 				<span class="nav-label">{item.label}</span>
 			</a>
 		{/each}
@@ -115,6 +132,14 @@
 		background: rgba(245,161,0,.12);
 		border-left-color: var(--orange);
 		font-weight: 600;
+	}
+
+	.nav-icon-wrap { position: relative; display: inline-flex; }
+	.nav-count {
+		position: absolute; top: -7px; right: -11px;
+		background: #b91c1c; color: white; font-size: 10px; font-weight: 700;
+		min-width: 16px; height: 16px; border-radius: 8px;
+		display: flex; align-items: center; justify-content: center; padding: 0 3px;
 	}
 
 	.nav-icon {

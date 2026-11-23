@@ -81,7 +81,7 @@
 
 <svelte:head><title>Messages — Appeals Doctor</title></svelte:head>
 
-<Topbar title="Messages" subtitle="Everything exchanged with Appeals Doctor for your account" />
+<Topbar title="Messages" subtitle="Everything exchanged with Appeals Doctor for your account" crumbs={[]} />
 
 <div class="content-area">
 	{#if data.account === null}
@@ -258,10 +258,13 @@
 </div>
 
 <style>
+	/* Full-bleed: sits directly under the topbar and fills the rest of the screen. */
+	.content-area { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 0; overflow-y: auto; }
+	.content-area > :global(.alert) { margin: 22px 26px; }
 	.msg-shell {
+		flex: 1; min-height: 0;
 		display: grid; grid-template-columns: 260px minmax(0, 1fr) 320px;
-		height: calc(100vh - 190px); min-height: 560px;
-		background: #fff; border: 1px solid var(--grey-line, #e0e6ef); border-radius: 14px; overflow: hidden;
+		background: #fff; overflow: hidden;
 	}
 	.grow { flex: 1; min-width: 0; }
 	.ellipsis { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -326,7 +329,7 @@
 		.below { display: none; }
 	}
 	@media (max-width: 800px) {
-		.msg-shell { grid-template-columns: 1fr; height: auto; }
+		.msg-shell { grid-template-columns: 1fr; flex: none; }
 		.channels { max-height: 260px; }
 		.chat { height: 640px; border-right: 0; }
 		.below { display: flex; }
