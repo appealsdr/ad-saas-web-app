@@ -17,6 +17,7 @@
 	import RichTextEditor from '$components/ui/RichTextEditor.svelte';
 	import type { AppMessage, ConversationData } from '$lib/types/app-message';
 	import {
+		replyCounts,
 		filterMessages,
 		firstUnreadId,
 		dayLabel,
@@ -40,6 +41,16 @@
 	/** 'card' = bordered card (account/store/case pages); 'channel' = Slack-style full-height channel. */
 	export let variant: 'card' | 'channel' = 'card';
 	export let composerPlaceholder = 'Write a message…';
+	/**
+	 * Mark unread messages as read once the thread has been on screen for a moment
+	 * (like a chat app). Off = a message is only marked read when it is opened.
+	 */
+	export let autoRead = true;
+	/**
+	 * 'composer' = Reply quotes the message in this panel's composer.
+	 * 'thread'   = Reply asks the host to open a thread side pane (event `thread`).
+	 */
+	export let replyMode: 'composer' | 'thread' = 'composer';
 	export let postAction = '?/post_message';
 	export let readAction = '?/mark_read';
 	/** Fixed card height in px (scrolls internally). */
@@ -47,7 +58,7 @@
 	/** Prefix for element ids when several panels share a page. */
 	export let idPrefix = 'conv';
 
-	const dispatch = createEventDispatcher<{ read: { id: string } }>();
+	const dispatch = createEventDispatcher<{ read: { id: string }; thread: { id: string } }>();
 	let input = '';
 	let search = '';
 	let posting = false;
@@ -61,9 +72,12 @@
 	$: messages = conversation?.messages ?? [];
 	$: sorted = sortMessages(messages);
 	$: byId = new Map(sorted.map((m) => [m.Id, m]));
+	$: threadCounts = replyMode === 'thread' ? replyCounts(sorted) : new Map<string, number>();
 	$: visible = filterMessages(sorted, search);
-	$: unreadDividerId = firstUnreadId(sorted, contactId);
-	$: unreadCount = sorted.filter((m) => !m.messageRead && !isMine(m)).length;
+	$: unreadList = sorted.filter((m) => !m.messageRead && !readOverrides.has(m.Id) && !isMine(m));
+	$: unreadCount = unreadList.length;
+	// The "N new messages" divider stays until everything has been read.
+	$: unreadDividerId = unreadCount > 0 ? firstUnreadId(sorted, contactId) : null;
 
 	function isMine(m: Pick<AppMessage, 'senderContactId'>): boolean {
 		return !!contactId && contactId === m.senderContactId;
@@ -104,22 +118,67 @@
 	let readOverrides = new Set<string>();
 	const isRead = (m: AppMessage) => !!m.messageRead || readOverrides.has(m.Id);
 	const isUnread = (m: AppMessage) => !isRead(m) && !isMine(m);
-	async function markRead(m: AppMessage) {
-		if (isRead(m) || isMine(m)) return;
-		readOverrides = new Set(readOverrides).add(m.Id);
-		dispatch('read', { id: m.Id });
+	async function postRead(id: string) {
 		try {
 			const body = new FormData();
-			body.set('messageId', m.Id);
+			body.set('messageId', id);
 			await fetch(readAction, { method: 'POST', body });
 		} catch {
 			// Best-effort — a failed read receipt isn't worth surfacing.
 		}
 	}
+	async function markRead(m: AppMessage) {
+		if (isRead(m) || isMine(m)) return;
+		readOverrides = new Set(readOverrides).add(m.Id);
+		dispatch('read', { id: m.Id });
+		await postRead(m.Id);
+	}
+
+	// ── Auto-read: thread on screen (and tab visible) for a moment → mark unread as read ──
+	let threadVisible = false;
+	let tabVisible = true;
+	let autoTimer: ReturnType<typeof setTimeout> | undefined;
+	function watchVisible(node: HTMLElement) {
+		if (typeof IntersectionObserver === 'undefined') {
+			threadVisible = true;
+			return {};
+		}
+		const io = new IntersectionObserver(([e]) => (threadVisible = e.isIntersecting), { threshold: 0.4 });
+		io.observe(node);
+		return { destroy: () => io.disconnect() };
+	}
+	function onVisibility() {
+		tabVisible = document.visibilityState === 'visible';
+	}
+	async function runAutoRead() {
+		const batch = unreadList.slice();
+		if (!batch.length) return;
+		readOverrides = new Set([...readOverrides, ...batch.map((m) => m.Id)]); // clears highlight now
+		for (const m of batch) dispatch('read', { id: m.Id });
+		announcement = `${batch.length} ${batch.length === 1 ? 'message' : 'messages'} marked as read.`;
+		await Promise.all(batch.map((m) => postRead(m.Id)));
+	}
+	$: if (typeof window !== 'undefined') {
+		clearTimeout(autoTimer);
+		if (autoRead && threadVisible && tabVisible && conversation?.available && unreadCount > 0) {
+			autoTimer = setTimeout(runAutoRead, 1500);
+		}
+	}
+
+	// Enter sends (Shift+Enter = new line). Ignored while sending or when there is no text.
+	function sendFromKeyboard() {
+		if (posting || !input.replace(/<[^>]*>|&nbsp;|\s/g, '')) return;
+		composerEl?.requestSubmit();
+	}
 
 	// ── Reply ──
 	let replyingTo: AppMessage | null = null;
 	async function startReply(m: AppMessage) {
+		if (replyMode === 'thread') {
+			closeModal();
+			dispatch('thread', { id: m.Id });
+			return;
+		}
 		replyingTo = m;
 		closeModal();
 		await tick();
@@ -182,7 +241,14 @@
 		await tick();
 		listEl?.scrollTo({ top: listEl.scrollHeight, behavior: smooth ? 'smooth' : 'auto' });
 	}
-	onMount(() => scrollToLatest());
+	onMount(() => {
+		scrollToLatest();
+		document.addEventListener('visibilitychange', onVisibility);
+		return () => {
+			document.removeEventListener('visibilitychange', onVisibility);
+			clearTimeout(autoTimer);
+		};
+	});
 	$: count = messages.length;
 	$: count, scrollToLatest();
 </script>
@@ -265,6 +331,7 @@
 		<div
 			class="conv-list"
 			bind:this={listEl}
+			use:watchVisible
 			role="log"
 			aria-label="{title} thread"
 			aria-busy={refreshing}
@@ -328,6 +395,15 @@
 							<div class="conv-quote"><span class="conv-quote-text">In reply to an earlier message</span></div>
 						{/if}
 						<div class="conv-body">{@html m.body ?? ''}</div>
+						{#if (threadCounts.get(m.Id) ?? 0) > 0}
+							<button
+								type="button"
+								class="conv-thread-btn"
+								on:click|stopPropagation={() => dispatch('thread', { id: m.Id })}
+							>
+								{threadCounts.get(m.Id)} {threadCounts.get(m.Id) === 1 ? 'reply' : 'replies'} · View thread
+							</button>
+						{/if}
 					</div>
 				</div>
 			{:else}
@@ -388,14 +464,21 @@
 			{#if !conversation.canSend && conversation.sendDisabledReason}
 				<div class="alert alert-warn conv-warn" role="note">{conversation.sendDisabledReason}</div>
 			{:else}
-				<RichTextEditor bind:value={input} placeholder={composerPlaceholder} />
+				<RichTextEditor
+					bind:value={input}
+					placeholder={composerPlaceholder}
+					submitOnEnter
+					on:submit={sendFromKeyboard}
+				>
+					<svelte:fragment slot="actions">
+						<span class="conv-hint"><b>Enter</b> to send · <b>Shift+Enter</b> for a new line</span>
+						<button type="submit" class="conv-send" disabled={posting} aria-label="Send message">
+							{posting ? 'Sending…' : 'Send'}
+						</button>
+					</svelte:fragment>
+				</RichTextEditor>
 				<input type="hidden" name="body" value={input} />
 				<input type="hidden" name="replyToMessageId" value={replyingTo?.Id ?? ''} />
-				<div class="conv-actions">
-					<button type="submit" class="btn btn-primary btn-sm" disabled={posting}>
-						{posting ? 'Sending…' : 'Send'}
-					</button>
-				</div>
 			{/if}
 			{#if sendError}
 				<div class="alert alert-error conv-send-error" role="alert">{sendError}</div>
@@ -556,6 +639,9 @@
 	.conv-reply-btn:hover:not(:disabled) { color: var(--orange, #f5a100); }
 	.conv-reply-btn:disabled { cursor: not-allowed; }
 	@media (hover: none) { .conv-reply-btn { opacity: 1; } }
+	.conv-thread-btn { margin-top: 2px; background: none; border: 0; padding: 2px 0; cursor: pointer; font-size: 12px; font-weight: 700; color: var(--blue, #2563eb); }
+	.conv-thread-btn:hover { text-decoration: underline; }
+	.conv-thread-btn:focus-visible { outline: 2px solid var(--orange, #f5a100); outline-offset: 2px; }
 	.conv-quote {
 		display: flex; gap: 6px; align-items: baseline; margin-bottom: 3px; padding-left: 8px;
 		border-left: 2px solid var(--grey-line, #e0e6ef); font-size: 11px; color: var(--grey-text, #5a6886); overflow: hidden;
@@ -566,7 +652,14 @@
 	.conv-body :global(ul), .conv-body :global(ol), .conv-modal-text :global(ul), .conv-modal-text :global(ol) { margin: 4px 0; padding-left: 22px; }
 
 	.conv-composer { flex-shrink: 0; border-top: 1px solid var(--grey-line, #e0e6ef); padding: 10px 16px 12px; }
-	.conv-actions { display: flex; justify-content: flex-end; margin-top: 8px; }
+	.conv-hint { font-size: 11px; color: var(--grey-text, #5a6886); }
+	.conv-send {
+		border: 0; border-radius: 8px; background: var(--orange, #f5a100); color: #1b2b4b;
+		font-weight: 700; font-size: 13px; padding: 7px 16px; min-height: 32px; cursor: pointer; margin-left: auto;
+	}
+	.conv-send:hover:not(:disabled) { background: var(--orange-dk, #d98c00); }
+	.conv-send:disabled { opacity: .6; cursor: not-allowed; }
+	.conv-send:focus-visible { outline: 2px solid var(--navy, #1b2b4b); outline-offset: 2px; }
 	.conv-warn, .conv-send-error { margin: 8px 0 0; }
 	.conv-reply-preview {
 		display: flex; align-items: center; gap: 8px; background: var(--grey-bg, #f6f8fb);
@@ -612,10 +705,10 @@
 	.conv.channel .conv-body :global(p) { margin: 0; }
 	.conv.channel .conv-composer { border-top: 0; padding: 4px 22px 10px; }
 	.conv.channel .conv-composer :global(.rte) { border: 1px solid #c9d3e6; border-radius: 10px; }
-	.conv.channel .conv-composer :global(.rte-editor) { min-height: 40px; max-height: 120px; padding: 8px 12px; }
-	.conv.channel .conv-composer :global(.rte-toolbar) { padding: 2px 6px; }
-	.conv.channel .conv-composer :global(.rte-toolbar button) { padding: 2px 8px; }
-	.conv.channel .conv-actions { margin-top: 6px; }
+	.conv.channel .conv-composer :global(.rte-editor) { min-height: 88px; max-height: 240px; padding: 12px 14px; font-size: 14px; }
+	.conv.channel .conv-composer :global(.rte-toolbar) { padding: 3px 8px; }
+	.conv.channel .conv-composer :global(.rte-toolbar button) { padding: 3px 9px; font-size: 13px; }
+	.conv.channel .conv-composer :global(.rte:focus-within) { border-color: var(--orange, #f5a100); }
 
 	@media (max-width: 640px) {
 		.conv { max-height: none; }

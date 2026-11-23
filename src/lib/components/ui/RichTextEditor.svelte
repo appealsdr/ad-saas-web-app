@@ -53,8 +53,8 @@
 		<span class="rte-sep"></span>
 		<button type="button" title="Bulleted list" on:click={() => exec('insertUnorderedList')}>• List</button>
 		<button type="button" title="Numbered list" on:click={() => exec('insertOrderedList')}>1. List</button>
-		<button type="button" title="Add link" on:click={addLink}>🔗</button>
-		<button type="button" title="Clear formatting" on:click={() => exec('removeFormat')}>✕</button>
+		<button type="button" title="Add link" on:click={addLink}>Link</button>
+		<button type="button" title="Clear formatting" on:click={() => exec('removeFormat')}>Clear</button>
 	</div>
 	<div
 		class="rte-editor"
@@ -67,6 +67,10 @@
 		aria-multiline="true"
 		tabindex="0"
 	></div>
+	{#if $$slots.actions}
+		<!-- Footer inside the box (e.g. the Send button), Slack-style. -->
+		<div class="rte-footer"><slot name="actions" /></div>
+	{/if}
 </div>
 
 <style>
@@ -121,6 +125,13 @@
 	.rte-editor:empty::before {
 		content: attr(data-placeholder);
 		color: var(--grey-text);
+	}
+	.rte-footer {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 8px;
+		padding: 4px 8px 8px 13px;
 	}
 	.rte-editor :global(ul),
 	.rte-editor :global(ol) {

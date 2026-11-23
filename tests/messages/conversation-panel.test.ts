@@ -130,6 +130,17 @@ describe('ConversationPanel rendering', () => {
 		expect(out).toMatch(/class="conv[^"]*channel/);
 		expect(out).not.toContain('height:560px'); // fills its container instead of a fixed card height
 	});
+	it('composer: Send lives inside the message box, Enter sends, link/clear are plain-text buttons', () => {
+		const out = html({ conversation: conv() });
+		const box = out.slice(out.indexOf('class="rte'), out.indexOf('name="body"'));
+		expect(box).toContain('rte-footer');
+		expect(box).toContain('conv-send');
+		expect(box).toContain('Enter</b> to send');
+		expect(box).toContain('>Link<');
+		expect(box).toContain('>Clear<');
+		expect(box).not.toContain('🔗');
+		expect(out).not.toContain('conv-actions');
+	});
 	it('wires form actions and a hidden reply field for the composer', () => {
 		const out = html({ conversation: conv(), postAction: '?/post_message' });
 		expect(out).toContain('action="?/post_message"');
@@ -163,5 +174,62 @@ describe('conversation-utils', () => {
 		expect(dayLabel('2026-11-21T01:00:00', now)).toBe('Today');
 		expect(dayLabel('2026-11-20T23:00:00', now)).toBe('Yesterday');
 		expect(dayLabel('2026-11-01T10:00:00', now)).toMatch(/Nov 1, 2026/);
+	});
+});
+
+import { threadFor, replyCounts } from '../../src/lib/components/messages/conversation-utils';
+import ThreadPane from '../../src/lib/components/messages/ThreadPane.svelte';
+
+describe('threads (Reply opens a side pane with the full history)', () => {
+	const t = (Id: string, replyToMessageId: string | null, createdAt: string, over: Partial<AppMessage> = {}) =>
+		msg({ Id, replyToMessageId, createdAt, body: `<p>${Id}</p>`, ...over });
+	const list = [
+		t('root', null, '2026-11-20T10:00:00Z'),
+		t('r1', 'root', '2026-11-20T10:05:00Z'),
+		t('r2', 'r1', '2026-11-20T10:10:00Z'), // reply to a reply — same thread
+		t('other', null, '2026-11-20T10:07:00Z'),
+		t('r3', 'root', '2026-11-20T10:20:00Z')
+	];
+
+	it('finds the root and every descendant, oldest first, from any message in the chain', () => {
+		for (const start of ['root', 'r1', 'r2', 'r3']) {
+			const th = threadFor(list, start)!;
+			expect(th.root.Id).toBe('root');
+			expect(th.replies.map((m) => m.Id)).toEqual(['r1', 'r2', 'r3']);
+		}
+		expect(threadFor(list, 'other')!.replies).toEqual([]);
+		expect(threadFor(list, 'missing')).toBeNull();
+	});
+	it('counts replies per thread root', () => {
+		expect(replyCounts(list).get('root')).toBe(3);
+		expect(replyCounts(list).has('other')).toBe(false);
+	});
+	it('survives a reply cycle and a parent outside the loaded list', () => {
+		const cyc = [t('a', 'b', '2026-11-20T10:00:00Z'), t('b', 'a', '2026-11-20T10:01:00Z')];
+		expect(threadFor(cyc, 'a')).not.toBeNull();
+		const orphan = [t('x', 'gone', '2026-11-20T10:00:00Z')];
+		expect(threadFor(orphan, 'x')!.root.Id).toBe('x');
+	});
+	it('ThreadPane renders the root, replies, reply count and a reply composer bound to the root', () => {
+		const out = render(ThreadPane, {
+			props: { conversation: conv({ messages: list }), rootId: 'r2', postAction: '?/post_message&store=s1' }
+		}).body;
+		expect(out).toContain('3 replies');
+		expect(out).toContain('<p>root</p>');
+		expect(out).toContain('<p>r2</p>');
+		expect(out).toContain('action="?/post_message&amp;store=s1"');
+		expect(out).toMatch(/name="replyToMessageId"[^>]*value="root"/);
+		expect(out).toContain('Enter</b> to send');
+	});
+	it('ThreadPane without send permission shows the notice instead of a composer', () => {
+		const out = render(ThreadPane, {
+			props: { conversation: conv({ messages: list, canSend: false, sendDisabledReason: 'Contact not linked' }), rootId: 'root' }
+		}).body;
+		expect(out).toContain('Contact not linked');
+		expect(out).not.toContain('name="body"');
+	});
+	it('conversation panel in thread mode shows a "View thread" link on the root', () => {
+		const out = html({ conversation: conv({ messages: list }), replyMode: 'thread' });
+		expect(out).toContain('3 replies · View thread');
 	});
 });
