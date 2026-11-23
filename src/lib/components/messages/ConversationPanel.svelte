@@ -13,7 +13,7 @@
 	 */
 	import { enhance } from '$app/forms';
 	import { invalidateAll } from '$app/navigation';
-	import { tick, onMount } from 'svelte';
+	import { tick, onMount, createEventDispatcher } from 'svelte';
 	import RichTextEditor from '$components/ui/RichTextEditor.svelte';
 	import type { AppMessage, ConversationData } from '$lib/types/app-message';
 	import {
@@ -47,6 +47,7 @@
 	/** Prefix for element ids when several panels share a page. */
 	export let idPrefix = 'conv';
 
+	const dispatch = createEventDispatcher<{ read: { id: string } }>();
 	let input = '';
 	let search = '';
 	let posting = false;
@@ -106,6 +107,7 @@
 	async function markRead(m: AppMessage) {
 		if (isRead(m) || isMine(m)) return;
 		readOverrides = new Set(readOverrides).add(m.Id);
+		dispatch('read', { id: m.Id });
 		try {
 			const body = new FormData();
 			body.set('messageId', m.Id);
