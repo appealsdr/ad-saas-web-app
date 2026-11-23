@@ -72,6 +72,8 @@ export interface OverviewInput {
 	storeMessages?: AppMessageWithContext[];
 	caseMessages?: AppMessageWithContext[];
 	currentContactId: string | null;
+	/** A case that must stay listed even if it falls outside the per-store cap. */
+	selectedCaseId?: string | null;
 }
 
 const authorOf = (m: AppMessageWithContext) =>
@@ -120,8 +122,10 @@ export function buildMessagesOverview(input: OverviewInput): MessagesOverview {
 				unread: caseUnread.get(c.Id) ?? 0,
 				href: `/stores/${s.id}/issues/${c.Id}`
 			}))
-			.sort((a, b) => b.unread - a.unread)
-			.slice(0, CASES_SHOWN_PER_STORE);
+			.sort((a, b) => b.unread - a.unread);
+		const shown = caseRows.slice(0, CASES_SHOWN_PER_STORE);
+		const pinned = caseRows.find((c) => c.id === input.selectedCaseId);
+		if (pinned && !shown.includes(pinned)) shown.push(pinned);
 		const sUnread = sf ? (storeUnread.get(sf) ?? 0) : 0;
 		const cUnread = cases.reduce((n, c) => n + (caseUnread.get(c.Id) ?? 0), 0);
 		const last = sf ? lastByStore.get(sf) : undefined;
@@ -134,7 +138,7 @@ export function buildMessagesOverview(input: OverviewInput): MessagesOverview {
 			caseUnread: cUnread,
 			totalUnread: sUnread + cUnread,
 			caseCount: cases.length,
-			cases: caseRows,
+			cases: shown,
 			lastMessage: last
 				? {
 						author: authorOf(last),
@@ -165,7 +169,8 @@ export async function loadMessagesOverview(
 	user: { id: string },
 	accountId: string,
 	sfdcAccountId: string | null,
-	currentContactId: string | null
+	currentContactId: string | null,
+	selectedCaseId: string | null = null
 ): Promise<MessagesOverview> {
 	const stores = await sql<OverviewStoreInput[]>`
 		SELECT id, name, sfdc_store_id FROM stores WHERE account_id = ${accountId} ORDER BY name
@@ -198,7 +203,8 @@ export async function loadMessagesOverview(
 		accountMessages,
 		storeMessages,
 		caseMessages,
-		currentContactId
+		currentContactId,
+		selectedCaseId
 	});
 	return casesResult.ok ? overview : { ...overview, partial: true };
 }

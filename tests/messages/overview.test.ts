@@ -73,6 +73,14 @@ describe('buildMessagesOverview', () => {
 		expect(a.href).toBe('/stores/st1#store-messages');
 	});
 
+	it('always lists the selected case even when it falls outside the per-store cap', () => {
+		const many = Array.from({ length: 8 }, (_, i) => ({ Id: `50000000000000${i}AAA`, CaseNumber: String(i), Subject: null, recordTypeName: null, sfdcStoreId: S1 }));
+		const o = buildMessagesOverview({ ...base, cases: many, accountMessages: [], storeMessages: [], caseMessages: [], selectedCaseId: '500000000000007AAA' });
+		const ids = o.stores.find((s) => s.id === 'st1')!.cases.map((c) => c.id);
+		expect(ids).toHaveLength(6);
+		expect(ids).toContain('500000000000007AAA');
+	});
+
 	it('picks the latest message across the store chat and its cases as the preview', () => {
 		const o = buildMessagesOverview({
 			...base,
