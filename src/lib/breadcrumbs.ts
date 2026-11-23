@@ -6,6 +6,7 @@ export interface Crumb {
 const SEGMENT_LABELS: Record<string, string> = {
 	dashboard: 'Dashboard',
 	accounts: 'Account',
+	messages: 'Messages',
 	subscription: 'Subscription & plans',
 	stores: 'Stores',
 	issues: 'Cases',

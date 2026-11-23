@@ -9,6 +9,7 @@
 		{ href: '/accounts',  icon: '/icons/account.png', label: 'Accounts' },
 		{ href: '/stores',    icon: '/icons/store.png',   label: 'Stores' },
 		{ href: '/issues',    icon: '/icons/case.png',    label: 'Cases' },
+		{ href: '/messages',  icon: '/icons/case_comment.png', label: 'Messages' },
 		{ href: '/payments',  icon: '/icons/payment.png', label: 'Payments' },
 		{ href: '/help',      icon: '/icons/guidance.png', label: 'How to Use' }
 	];

@@ -119,6 +119,17 @@ describe('ConversationPanel rendering', () => {
 		expect(out).not.toContain('name="body"');
 		expect(out).toMatch(/conv-reply-btn[^>]*disabled/);
 	});
+	it('channel variant (Messages tab) renders the Slack-style channel with a custom composer placeholder', () => {
+		const out = html({
+			conversation: conv({ messages: [msg()] }),
+			variant: 'channel',
+			title: '# Account chat',
+			composerPlaceholder: 'Message Account chat'
+		});
+		expect(out).toContain('# Account chat');
+		expect(out).toMatch(/class="conv[^"]*channel/);
+		expect(out).toContain('height:100%');
+	});
 	it('wires form actions and a hidden reply field for the composer', () => {
 		const out = html({ conversation: conv(), postAction: '?/post_message' });
 		expect(out).toContain('action="?/post_message"');

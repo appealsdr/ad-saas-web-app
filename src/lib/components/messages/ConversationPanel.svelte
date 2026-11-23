@@ -37,6 +37,9 @@
 	export let scopeSubtitle: string | null = null;
 	/** Header treatment from the design: account = navy, store/case = light. */
 	export let tone: 'navy' | 'light' = 'light';
+	/** 'card' = bordered card (account/store/case pages); 'channel' = Slack-style full-height channel. */
+	export let variant: 'card' | 'channel' = 'card';
+	export let composerPlaceholder = 'Write a message…';
 	export let postAction = '?/post_message';
 	export let readAction = '?/mark_read';
 	/** Fixed card height in px (scrolls internally). */
@@ -185,7 +188,8 @@
 <section
 	class="conv"
 	class:navy={tone === 'navy'}
-	style="height:{height}px"
+	class:channel={variant === 'channel'}
+	style={variant === 'channel' ? 'height:100%' : `height:${height}px`}
 	data-context-type={conversation?.contextType ?? ''}
 	data-context-id={conversation?.contextId ?? ''}
 	aria-label={title}
@@ -321,6 +325,7 @@
 					{/if}
 				</p>
 			{/each}
+			<slot name="thread-end" />
 		</div>
 
 		<form
@@ -369,7 +374,7 @@
 			{#if !conversation.canSend && conversation.sendDisabledReason}
 				<div class="alert alert-warn conv-warn" role="note">{conversation.sendDisabledReason}</div>
 			{:else}
-				<RichTextEditor bind:value={input} placeholder="Write a message…" />
+				<RichTextEditor bind:value={input} placeholder={composerPlaceholder} />
 				<input type="hidden" name="body" value={input} />
 				<input type="hidden" name="replyToMessageId" value={replyingTo?.Id ?? ''} />
 				<div class="conv-actions">
@@ -575,6 +580,22 @@
 	.conv-modal-meta { display: flex; gap: 12px; align-items: flex-start; margin-bottom: 14px; }
 	.conv-modal-text { font-size: 14px; line-height: 1.5; color: var(--navy-dark, #111d33); word-break: break-word; border-top: 1px solid var(--grey-line, #e0e6ef); padding-top: 14px; }
 	.conv-modal-foot { padding: 12px 18px; border-top: 1px solid var(--grey-line, #e0e6ef); display: flex; justify-content: flex-end; gap: 8px; }
+
+	/* ── Channel (Slack-format) variant ── */
+	.conv.channel { border: 0; border-radius: 0; max-height: none; min-height: 0; }
+	.conv.channel .conv-head { min-height: 60px; box-sizing: border-box; padding: 0 22px; }
+	.conv.channel .conv-title { font-size: 16px; }
+	.conv.channel .conv-search { padding: 8px 22px; }
+	.conv.channel .conv-list { padding: 8px 0; }
+	.conv.channel .conv-day, .conv.channel .conv-unread-divider { padding: 12px 22px 6px; font-size: 12px; }
+	.conv.channel .conv-row { padding: 6px 22px; gap: 12px; }
+	.conv.channel .conv-row.internal { background: transparent; }
+	.conv.channel .conv-row.internal:hover { background: var(--grey-bg, #f6f8fb); }
+	.conv.channel .conv-row.unread { background: #fff7e0; }
+	.conv.channel .conv-avatar { width: 36px; height: 36px; font-size: 13px; }
+	.conv.channel .conv-body { font-size: 14px; }
+	.conv.channel .conv-composer { border-top: 0; padding: 0 22px 18px; }
+	.conv.channel .conv-composer :global(.rte) { border: 1px solid #c9d3e6; border-radius: 10px; }
 
 	@media (max-width: 640px) {
 		.conv { max-height: none; }
