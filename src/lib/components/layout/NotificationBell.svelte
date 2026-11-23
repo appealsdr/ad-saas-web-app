@@ -1,34 +1,12 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 
-	interface NotificationItem {
-		id: string;
-		title: string;
-		subtitle: string;
-		href: string;
-	}
+	import { notifications, refreshNotifications } from '$stores/notifications';
 
 	let open = false;
-	let loading = true;
-	let error = false;
-	let items: NotificationItem[] = [];
-	let total = 0;
+	$: ({ items, total, loading, error } = $notifications);
 
-	async function load() {
-		loading = true;
-		error = false;
-		try {
-			const res = await fetch('/api/notifications');
-			if (!res.ok) throw new Error('bad response');
-			const data = await res.json();
-			items = data.items ?? [];
-			total = data.total ?? items.length;
-		} catch {
-			error = true;
-		} finally {
-			loading = false;
-		}
-	}
+	const load = refreshNotifications;
 
 	function toggle() {
 		open = !open;

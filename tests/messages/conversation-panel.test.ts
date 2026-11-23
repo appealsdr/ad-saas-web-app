@@ -128,7 +128,7 @@ describe('ConversationPanel rendering', () => {
 		});
 		expect(out).toContain('# Account chat');
 		expect(out).toMatch(/class="conv[^"]*channel/);
-		expect(out).toContain('height:100%');
+		expect(out).not.toContain('height:560px'); // fills its container instead of a fixed card height
 	});
 	it('wires form actions and a hidden reply field for the composer', () => {
 		const out = html({ conversation: conv(), postAction: '?/post_message' });

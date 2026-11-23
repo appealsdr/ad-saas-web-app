@@ -191,7 +191,7 @@
 	class="conv"
 	class:navy={tone === 'navy'}
 	class:channel={variant === 'channel'}
-	style={variant === 'channel' ? 'height:100%' : `height:${height}px`}
+	style={variant === 'channel' ? undefined : `height:${height}px`}
 	data-context-type={conversation?.contextType ?? ''}
 	data-context-id={conversation?.contextId ?? ''}
 	aria-label={title}
@@ -202,6 +202,16 @@
 			{#if scopeSubtitle}<div class="conv-sub">{scopeSubtitle}</div>{/if}
 		</div>
 		{#if scopeBadge}<span class="conv-scope">{scopeBadge}</span>{/if}
+		{#if variant === 'channel' && conversation?.available && !loading}
+			<label class="sr-only" for="{idPrefix}-search">Search messages</label>
+			<input
+				id="{idPrefix}-search"
+				type="search"
+				class="conv-search-input conv-search-inline"
+				placeholder="Search messages…"
+				bind:value={search}
+			/>
+		{/if}
 		{#if unreadCount > 0}
 			<span class="conv-unread-pill" aria-label="{unreadCount} unread">{unreadCount} new</span>
 		{/if}
@@ -230,16 +240,18 @@
 			<span>{conversation.unavailableReason ?? 'This conversation is not available right now.'}</span>
 		</div>
 	{:else}
-		<div class="conv-search">
-			<label class="sr-only" for="{idPrefix}-search">Search messages</label>
-			<input
-				id="{idPrefix}-search"
-				type="search"
-				class="conv-search-input"
-				placeholder="Search messages…"
-				bind:value={search}
-			/>
-		</div>
+		{#if variant !== 'channel'}
+			<div class="conv-search">
+				<label class="sr-only" for="{idPrefix}-search">Search messages</label>
+				<input
+					id="{idPrefix}-search"
+					type="search"
+					class="conv-search-input"
+					placeholder="Search messages…"
+					bind:value={search}
+				/>
+			</div>
+		{/if}
 
 		{#if conversation.error}
 			<div class="alert alert-error conv-error" role="alert">
@@ -583,25 +595,32 @@
 	.conv-modal-text { font-size: 14px; line-height: 1.5; color: var(--navy-dark, #111d33); word-break: break-word; border-top: 1px solid var(--grey-line, #e0e6ef); padding-top: 14px; }
 	.conv-modal-foot { padding: 12px 18px; border-top: 1px solid var(--grey-line, #e0e6ef); display: flex; justify-content: flex-end; gap: 8px; }
 
-	/* ── Channel (Slack-format) variant ── */
-	.conv.channel { border: 0; border-radius: 0; max-height: none; min-height: 0; }
-	.conv.channel .conv-head { min-height: 60px; box-sizing: border-box; padding: 0 22px; }
-	.conv.channel .conv-title { font-size: 16px; }
-	.conv.channel .conv-search { padding: 8px 22px; }
-	.conv.channel .conv-list { padding: 8px 0; }
-	.conv.channel .conv-day, .conv.channel .conv-unread-divider { padding: 12px 22px 6px; font-size: 12px; }
-	.conv.channel .conv-row { padding: 6px 22px; gap: 12px; }
+	/* ── Channel (Slack-format) variant — compact so the thread gets the space ── */
+	.conv.channel { border: 0; border-radius: 0; max-height: none; min-height: 0; height: auto; flex: 1; }
+	.conv.channel .conv-head { min-height: 52px; box-sizing: border-box; padding: 6px 22px; }
+	.conv.channel .conv-title { font-size: 16px; line-height: 1.2; }
+	.conv-search-inline { width: 220px; min-height: 32px; padding: 5px 10px; flex-shrink: 0; }
+	.conv.channel .conv-list { padding: 4px 0; }
+	.conv.channel .conv-day, .conv.channel .conv-unread-divider { padding: 6px 22px 2px; font-size: 12px; }
+	.conv.channel .conv-row { padding: 3px 22px; gap: 10px; }
 	.conv.channel .conv-row.internal { background: transparent; }
 	.conv.channel .conv-row.internal:hover { background: var(--grey-bg, #f6f8fb); }
 	.conv.channel .conv-row.unread { background: #fff7e0; }
-	.conv.channel .conv-avatar { width: 36px; height: 36px; font-size: 13px; }
-	.conv.channel .conv-body { font-size: 14px; }
-	.conv.channel .conv-composer { border-top: 0; padding: 0 22px 18px; }
+	.conv.channel .conv-avatar { width: 32px; height: 32px; font-size: 12px; margin-top: 2px; }
+	.conv.channel .conv-meta { margin-bottom: 0; gap: 6px; }
+	.conv.channel .conv-body { font-size: 14px; line-height: 1.35; }
+	.conv.channel .conv-body :global(p) { margin: 0; }
+	.conv.channel .conv-composer { border-top: 0; padding: 4px 22px 10px; }
 	.conv.channel .conv-composer :global(.rte) { border: 1px solid #c9d3e6; border-radius: 10px; }
+	.conv.channel .conv-composer :global(.rte-editor) { min-height: 40px; max-height: 120px; padding: 8px 12px; }
+	.conv.channel .conv-composer :global(.rte-toolbar) { padding: 2px 6px; }
+	.conv.channel .conv-composer :global(.rte-toolbar button) { padding: 2px 8px; }
+	.conv.channel .conv-actions { margin-top: 6px; }
 
 	@media (max-width: 640px) {
 		.conv { max-height: none; }
 		.conv-head { flex-wrap: wrap; padding: 10px 12px; }
+		.conv-search-inline { width: 100%; order: 5; }
 		.conv-row { padding: 8px 12px; }
 		.conv-composer { padding: 8px 12px 10px; }
 		.conv-overlay { padding: 12px; }

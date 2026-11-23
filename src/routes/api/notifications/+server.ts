@@ -110,16 +110,15 @@ export const GET: RequestHandler = async ({ locals }) => {
 			});
 		}
 	}
-	items.push(
-		...aggregateMessageNotifications({
+	const messageItems = aggregateMessageNotifications({
 			case: caseMsgs.ok ? caseMsgs.messages : undefined,
 			store: storeMsgs.ok ? storeMsgs.messages : undefined,
 			account: accountMsgs.ok ? accountMsgs.messages : undefined,
 			currentContactId: user.sfdc_contact_id,
 			storeBySfdcId,
 			caseStoreById
-		})
-	);
+		});
+	items.push(...messageItems);
 
 	items.sort((a, b) => {
 		const ta = a.createdAt ? new Date(a.createdAt).getTime() : 0;
@@ -129,6 +128,8 @@ export const GET: RequestHandler = async ({ locals }) => {
 
 	return json({
 		items: items.slice(0, NOTIFICATION_LIMIT).map(({ createdAt: _createdAt, ...rest }) => rest),
-		total: items.length
+		total: items.length,
+		/** Unread App Messages only — shown as the badge on the Messages tab. */
+		messages: messageItems.length
 	});
 };
