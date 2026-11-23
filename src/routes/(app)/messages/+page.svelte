@@ -1,20 +1,14 @@
 <script lang="ts">
 	import Topbar from '$components/layout/Topbar.svelte';
 	import ConversationPanel from '$components/messages/ConversationPanel.svelte';
-	import { dayLabel } from '$components/messages/conversation-utils';
+	import ThreadPane from '$components/messages/ThreadPane.svelte';
+	import { refreshNotifications } from '$stores/notifications';
 	import type { MessagesOverview } from '$lib/server/messages/overview';
+	import type { ConversationData } from '$lib/types/app-message';
 	import type { PageData } from './$types';
 
 	export let data: PageData;
 
-	const fmtTime = (iso: string) => {
-		try {
-			return new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true }).toLowerCase();
-		} catch {
-			return '';
-		}
-	};
-	const when = (iso: string) => `${dayLabel(iso)} · ${fmtTime(iso)}`;
 	const badge = (n: number) => (n > 99 ? '99+' : String(n));
 
 	// ── Selected conversation (from the URL; resolved + tenant-checked on the server) ──
@@ -36,11 +30,42 @@
 		});
 	}
 
+	// ── Conversation (streamed). Kept across refreshes of the SAME conversation so the
+	//    panel doesn't flash back to "loading" after each send or read receipt. ──
+	const failedConversation = (): ConversationData => ({
+		kind: 'account', contextType: 'Account', contextId: null, available: true, unavailableReason: null,
+		canSend: false, sendDisabledReason: null, messages: [], error: 'Could not load messages. Please try again.', currentContactId: null
+	});
+	let conversation: ConversationData | null = null;
+	let convKey = '';
+	$: {
+		const p = data.conversation;
+		if (selKey !== convKey) {
+			convKey = selKey;
+			conversation = null;
+		}
+		p.then((c) => {
+			if (p === data.conversation) conversation = c ?? failedConversation();
+		});
+	}
+
+	// ── Thread side pane (opened from Reply / "N replies") ──
+	let threadRootId: string | null = null;
+	let lastSelKey = selKey;
+	$: if (selKey !== lastSelKey) {
+		lastSelKey = selKey;
+		threadRootId = null;
+	}
+
 	// Messages read in this view lower the badges immediately (server counts refresh on the next load).
 	let readCounts: Record<string, number> = {};
 	$: data, (readCounts = {});
+	let refreshTimer: ReturnType<typeof setTimeout> | undefined;
 	function onRead() {
 		readCounts = { ...readCounts, [selKey]: (readCounts[selKey] ?? 0) + 1 };
+		// Refresh the sidebar badge + bell once the burst of read receipts has settled.
+		clearTimeout(refreshTimer);
+		refreshTimer = setTimeout(refreshNotifications, 1200);
 	}
 	const left = (key: string, n: number) => Math.max(0, n - (readCounts[key] ?? 0));
 	// A store's badge = its own chat + all its cases, minus what was just read here.
@@ -87,7 +112,7 @@
 	{#if data.account === null}
 		<div class="alert alert-warn">No account is linked to your user yet, so messages are unavailable.</div>
 	{:else}
-		<div class="msg-shell">
+		<div class="msg-shell" class:with-thread={!!threadRootId && !!conversation}>
 			<!-- ── Left: conversations with unread counts ─────── -->
 			<nav class="channels" aria-label="Conversations">
 				<div class="ch-account">
@@ -112,7 +137,7 @@
 				<div class="ch-group">
 					<div class="ch-heading">ACCOUNT</div>
 					<a class="ch-item" class:active={kind === 'account'} href="/messages" aria-current={kind === 'account' ? 'page' : undefined}>
-						<span aria-hidden="true">#</span><span class="grow">Account chat</span>
+						<img class="ch-ico" src="/icons/account.png" alt="" aria-hidden="true" /><span class="grow">Account chat</span>
 						{#if overview && left('account', overview.accountUnread) > 0}<span class="ch-badge" aria-label="{left('account', overview.accountUnread)} unread">{badge(left('account', overview.accountUnread))}</span>{/if}
 					</a>
 				</div>
@@ -133,6 +158,7 @@
 										aria-label="{collapsed.has(s.id) ? 'Expand' : 'Collapse'} {s.name}"
 										on:click={() => toggle(s.id)}>{collapsed.has(s.id) ? '▸' : '▾'}</button
 									>
+									<img class="ch-ico" src="/icons/store.png" alt="" aria-hidden="true" />
 									<a class="grow link" href={storeHref(s.id)}>{s.name}</a>
 									{#if storeTotal(s) > 0}
 										<span class="ch-badge" aria-label="{storeTotal(s)} unread">{badge(storeTotal(s))}</span>
@@ -141,12 +167,12 @@
 								{#if !collapsed.has(s.id)}
 									<div class="ch-cases">
 										<a class="ch-item sub" class:active={kind === 'store' && sel?.storeId === s.id} href={storeHref(s.id)}>
-											<span aria-hidden="true">#</span><span class="grow">Store chat</span>
+											<img class="ch-ico" src="/icons/store.png" alt="" aria-hidden="true" /><span class="grow">Store chat</span>
 											{#if left(`store:${s.id}`, s.storeUnread) > 0}<span class="ch-badge" aria-label="{left(`store:${s.id}`, s.storeUnread)} unread">{badge(left(`store:${s.id}`, s.storeUnread))}</span>{/if}
 										</a>
 										{#each s.cases as c (c.id)}
 											<a class="ch-item sub" class:active={kind === 'case' && sel?.caseId === c.id} class:dim={c.unread === 0} href={caseHref(s.id, c.id)} title={c.label}>
-												<span class="grow ellipsis">{c.label}</span>
+												<img class="ch-ico" src="/icons/case.png" alt="" aria-hidden="true" /><span class="grow ellipsis">{c.label}</span>
 												{#if left(`case:${c.id}`, c.unread) > 0}<span class="ch-badge" aria-label="{left(`case:${c.id}`, c.unread)} unread">{badge(left(`case:${c.id}`, c.unread))}</span>{/if}
 											</a>
 										{/each}
@@ -174,85 +200,52 @@
 					</div>
 				{/if}
 				{#key selKey}
-					{#await data.conversation}
-						<ConversationPanel loading variant="channel" {title} idPrefix="msgtab" />
-					{:then conversation}
-						<ConversationPanel
-							{conversation}
-							variant="channel"
-							{title}
-							scopeSubtitle={subtitle}
-							composerPlaceholder={placeholder}
-							{postAction}
-							{readAction}
-							idPrefix="msgtab"
-							on:read={onRead}
-						>
-							<svelte:fragment slot="thread-end">
-								{#if kind === 'account' && overview && overview.stores.some((s) => s.totalUnread > 0)}
-									<div class="digest-row">
-										<div class="digest-avatar" aria-hidden="true">✦</div>
-										<div class="digest-body">
-											<div class="digest-head"><b>Activity</b><span class="digest-app">APP</span></div>
-											<div class="digest">
-												<div class="digest-title">New messages below this account</div>
-												{#each overview.stores.filter((s) => s.totalUnread > 0) as s (s.id)}
-													<div class="digest-line">
-														<b>{s.name}</b> ·
-														{#if s.storeUnread > 0}<a href={storeHref(s.id)}>{s.storeUnread} in store chat</a>{/if}
-														{#each s.cases.filter((c) => c.unread > 0) as c (c.id)}
-															· <a href={caseHref(s.id, c.id)}>{c.unread} in Case #{c.number}</a>
-														{/each}
-													</div>
-												{/each}
-											</div>
+					<ConversationPanel
+						{conversation}
+						loading={conversation === null}
+						variant="channel"
+						{title}
+						scopeSubtitle={subtitle}
+						composerPlaceholder={placeholder}
+						{postAction}
+						{readAction}
+						replyMode="thread"
+						idPrefix="msgtab"
+						on:read={onRead}
+						on:thread={(e) => (threadRootId = e.detail.id)}
+					>
+						<svelte:fragment slot="thread-end">
+							{#if kind === 'account' && overview && overview.stores.some((s) => s.totalUnread > 0)}
+								<div class="digest-row">
+									<div class="digest-avatar" aria-hidden="true">✦</div>
+									<div class="digest-body">
+										<div class="digest-head"><b>Activity</b><span class="digest-app">APP</span></div>
+										<div class="digest">
+											<div class="digest-title">New messages below this account</div>
+											{#each overview.stores.filter((s) => s.totalUnread > 0) as s (s.id)}
+												<div class="digest-line">
+													<b>{s.name}</b> ·
+													{#if s.storeUnread > 0}<a href={storeHref(s.id)}>{s.storeUnread} in store chat</a>{/if}
+													{#each s.cases.filter((c) => c.unread > 0) as c (c.id)}
+														· <a href={caseHref(s.id, c.id)}>{c.unread} in Case #{c.number}</a>
+													{/each}
+												</div>
+											{/each}
 										</div>
 									</div>
-								{/if}
-							</svelte:fragment>
-						</ConversationPanel>
-					{/await}
+								</div>
+							{/if}
+						</svelte:fragment>
+					</ConversationPanel>
 				{/key}
 			</section>
 
-			<!-- ── Right: stores below this account ───────────── -->
-			<aside class="below" aria-label="Stores below this account">
-				<div class="below-head">
-					<div class="below-title">Stores below this account</div>
-					{#if overview}<span class="below-count">{overview.stores.length}</span>{/if}
-				</div>
-				<div class="below-list">
-					{#if overviewState === 'loading'}
-						<div class="ch-loading" role="status" aria-busy="true">Loading…</div>
-					{:else}
-						{#each overview?.stores ?? [] as s (s.id)}
-							<div class="store-card">
-								<div class="sc-top">
-									<b class="grow ellipsis">{s.name}</b>
-									{#if s.totalUnread > 0}<span class="sc-new">{badge(s.totalUnread)} new</span>{:else}<span class="sc-read">All read</span>{/if}
-								</div>
-								<div class="sc-sub">Store chat · {s.caseCount} {s.caseCount === 1 ? 'case' : 'cases'}</div>
-								{#if !s.linked}
-									<div class="sc-last muted">Not linked to Salesforce yet.</div>
-								{:else if s.lastMessage}
-									<div class="sc-last">
-										<b>{s.lastMessage.author}:</b>
-										{s.lastMessage.preview || '(no text)'}
-										<div class="sc-when">
-											{s.lastMessage.source === 'case' && s.lastMessage.caseNumber ? `Case #${s.lastMessage.caseNumber} · ` : ''}{when(s.lastMessage.createdAt)}
-										</div>
-									</div>
-								{:else}
-									<div class="sc-last muted">No recent messages.</div>
-								{/if}
-								<a class="sc-open" href={storeHref(s.id)}>Open store chat</a>
-							</div>
-						{:else}
-							<p class="ch-empty">{overview ? 'No stores yet.' : 'Could not load stores.'}</p>
-						{/each}
-					{/if}
-				</div>
-			</aside>
+			<!-- ── Right: thread (only while a thread is open) ── -->
+			{#if threadRootId && conversation}
+				{#key threadRootId}
+					<ThreadPane {conversation} rootId={threadRootId} {postAction} on:close={() => (threadRootId = null)} />
+				{/key}
+			{/if}
 		</div>
 	{/if}
 </div>
@@ -263,7 +256,7 @@
 	.content-area > :global(.alert) { margin: 22px 26px; }
 	.msg-shell {
 		flex: 1; min-height: 0;
-		display: grid; grid-template-columns: 260px minmax(0, 1fr) 320px;
+		display: grid; grid-template-columns: 260px minmax(0, 1fr);
 		background: #fff; overflow: hidden;
 	}
 	.grow { flex: 1; min-width: 0; }
@@ -271,9 +264,9 @@
 
 	/* Channels (navy sidebar) */
 	.channels { background: #1b2b4b; color: #c9d3e6; display: flex; flex-direction: column; gap: 14px; padding: 14px 10px; overflow-y: auto; }
-	.ch-account { display: flex; align-items: center; gap: 10px; padding: 0 6px; }
+	.ch-account { display: flex; align-items: flex-start; gap: 10px; padding: 0 6px; }
 	.ch-logo { width: 34px; height: 34px; border-radius: 9px; background: #f5a100; color: #1b2b4b; font-weight: 800; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
-	.ch-account-name { flex: 1; min-width: 0; font-weight: 700; color: #fff; font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+	.ch-account-name { flex: 1; min-width: 0; font-weight: 700; color: #fff; font-size: 14px; line-height: 1.3; padding-top: 2px; white-space: normal; overflow-wrap: anywhere; } /* full account name, wraps instead of truncating */
 	.ch-bell { position: relative; width: 36px; height: 36px; border-radius: 8px; background: #2a3f6f; color: #fff; display: flex; align-items: center; justify-content: center; flex-shrink: 0; text-decoration: none; }
 	.ch-bell.has { background: #f5a100; color: #1b2b4b; }
 	.ch-bell-count { position: absolute; top: -6px; right: -6px; background: #fff; color: #1b2b4b; font-size: 11px; font-weight: 800; border-radius: 999px; min-width: 20px; height: 20px; display: flex; align-items: center; justify-content: center; padding: 0 5px; box-shadow: 0 0 0 2px #1b2b4b; }
@@ -283,15 +276,16 @@
 	.ch-item.active { background: #2a3f6f; box-shadow: inset 3px 0 0 #f5a100; }
 	.ch-item:hover:not(.active) { background: rgba(255,255,255,.07); }
 	.ch-item:focus-visible, .ch-caret:focus-visible { outline: 2px solid #f5a100; outline-offset: 1px; }
-	.ch-item.store { padding: 4px 10px 4px 4px; }
+	.ch-item.store { padding: 4px 10px 4px 4px; gap: 6px; }
 	.ch-item.store .link { color: #fff; text-decoration: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 	.ch-item.sub { padding: 5px 10px; font-size: 13px; }
+	.ch-ico { width: 14px; height: 14px; object-fit: contain; flex-shrink: 0; opacity: .85; }
+	.ch-item.dim .ch-ico { opacity: .55; }
 	.ch-item.dim { color: #c9d3e6; font-weight: 500; }
 	.ch-caret { background: none; border: 0; color: #c9d3e6; cursor: pointer; font-size: 11px; width: 24px; min-height: 28px; }
 	.ch-cases { margin-left: 20px; padding-left: 8px; border-left: 1px solid #2a3f6f; }
 	.ch-badge { background: #f5a100; color: #1b2b4b; font-size: 11px; font-weight: 800; border-radius: 999px; min-width: 20px; height: 20px; display: inline-flex; align-items: center; justify-content: center; padding: 0 5px; }
 	.ch-loading, .ch-empty, .ch-note { font-size: 12px; color: #8fa0c2; padding: 4px 10px; }
-	.below .ch-loading, .below .ch-empty { color: var(--grey-text, #5a6886); }
 
 	/* Chat */
 	.chat { min-width: 0; min-height: 0; display: flex; flex-direction: column; border-right: 1px solid var(--grey-line, #e0e6ef); }
@@ -308,30 +302,16 @@
 	.digest-title { font-weight: 700; }
 	.digest a { color: #1b2b4b; font-weight: 700; text-decoration: underline; }
 
-	/* Stores below */
-	.below { background: #f6f8fb; display: flex; flex-direction: column; min-height: 0; }
-	.below-head { height: 60px; box-sizing: border-box; padding: 0 18px; border-bottom: 1px solid #e0e6ef; display: flex; align-items: center; }
-	.below-title { font-weight: 800; font-size: 14px; flex: 1; }
-	.below-count { font-size: 12px; color: var(--grey-text, #5a6886); }
-	.below-list { padding: 14px; display: flex; flex-direction: column; gap: 12px; overflow-y: auto; }
-	.store-card { background: #fff; border: 1px solid #e0e6ef; border-radius: 10px; padding: 12px; }
-	.sc-top { display: flex; align-items: center; gap: 8px; }
-	.sc-new { background: #f5a100; color: #1b2b4b; font-size: 11px; font-weight: 800; border-radius: 999px; padding: 0 8px; height: 20px; display: inline-flex; align-items: center; }
-	.sc-read { font-size: 12px; color: var(--grey-text, #5a6886); }
-	.sc-sub { font-size: 12px; color: var(--grey-text, #5a6886); margin-top: 2px; }
-	.sc-last { font-size: 13px; margin-top: 8px; border-left: 3px solid #e0e6ef; padding-left: 8px; word-break: break-word; }
-	.sc-last.muted { color: var(--grey-text, #5a6886); }
-	.sc-when { font-size: 11px; color: var(--grey-text, #5a6886); margin-top: 2px; }
-	.sc-open { display: inline-block; margin-top: 10px; font-size: 13px; font-weight: 700; color: #1b2b4b; text-decoration: underline; min-height: 24px; }
+	.msg-shell.with-thread { grid-template-columns: 260px minmax(0, 1fr) 380px; }
+	.msg-shell.with-thread .chat { border-right: 0; }
 
 	@media (max-width: 1180px) {
-		.msg-shell { grid-template-columns: 240px minmax(0, 1fr); }
-		.below { display: none; }
+		.msg-shell.with-thread { grid-template-columns: 220px minmax(0, 1fr) 320px; }
 	}
 	@media (max-width: 800px) {
-		.msg-shell { grid-template-columns: 1fr; flex: none; }
+		.msg-shell, .msg-shell.with-thread { grid-template-columns: 1fr; flex: none; }
 		.channels { max-height: 260px; }
 		.chat { height: 640px; border-right: 0; }
-		.below { display: flex; }
+		.msg-shell.with-thread :global(.thread) { height: 560px; border-left: 0; border-top: 1px solid var(--grey-line, #e0e6ef); }
 	}
 </style>

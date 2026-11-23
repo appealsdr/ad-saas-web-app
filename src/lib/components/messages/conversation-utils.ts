@@ -53,3 +53,42 @@ export function dayLabel(iso: string, now: Date = new Date()): string {
 	if (diffDays === 1) return 'Yesterday';
 	return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 }
+
+/** Walk reply links up to the top-most ancestor present in `byId` (cycle-safe). */
+function rootIdOf(id: string, byId: Map<string, AppMessage>): string {
+	let cur = id;
+	const seen = new Set<string>();
+	for (;;) {
+		const parent = byId.get(cur)?.replyToMessageId;
+		if (!parent || !byId.has(parent) || seen.has(parent)) return cur;
+		seen.add(cur);
+		cur = parent;
+	}
+}
+
+/**
+ * The full reply history around a message: the top-most message of its chain plus
+ * every reply descending from it, oldest first.
+ */
+export function threadFor<T extends AppMessage>(
+	messages: T[],
+	anyMessageId: string
+): { root: T; replies: T[] } | null {
+	const byId = new Map<string, AppMessage>(messages.map((m) => [m.Id, m]));
+	if (!byId.has(anyMessageId)) return null;
+	const rootId = rootIdOf(anyMessageId, byId);
+	const members = messages.filter((m) => m.Id !== rootId && rootIdOf(m.Id, byId) === rootId);
+	const sorted = sortMessages(members);
+	return { root: byId.get(rootId) as T, replies: sorted };
+}
+
+/** Number of replies (all depths) under each thread root, keyed by root message id. */
+export function replyCounts(messages: AppMessage[]): Map<string, number> {
+	const byId = new Map(messages.map((m) => [m.Id, m]));
+	const counts = new Map<string, number>();
+	for (const m of messages) {
+		const root = rootIdOf(m.Id, byId);
+		if (root !== m.Id) counts.set(root, (counts.get(root) ?? 0) + 1);
+	}
+	return counts;
+}
