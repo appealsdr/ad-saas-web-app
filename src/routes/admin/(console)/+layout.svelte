@@ -22,6 +22,7 @@
 			{#if data.can.logs}<a href="/admin/logs" aria-current={cur('/admin/logs')}>Logs</a>{/if}
 			{#if data.can.data}<a href="/admin/data" aria-current={cur('/admin/data')}>Data &amp; SQL</a>{/if}
 			<a href="/admin/api-integrations" aria-current={cur('/admin/api-integrations')}>API</a>
+			{#if data.can.logs}<a href="/admin/security" aria-current={cur('/admin/security')}>Security</a>{/if}
 			{#if data.can.staff}<a href="/admin/staff" aria-current={cur('/admin/staff')}>Staff</a>{/if}
 		</nav>
 		<span class="adm-spacer"></span>

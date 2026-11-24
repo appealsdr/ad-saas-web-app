@@ -69,6 +69,8 @@ interface Row {
 export interface RequireOptions {
 	/** Source IP as reported by the platform (event.getClientAddress()). Needed for IP allowlists. */
 	clientIp?: string | null;
+	/** Accept OAuth access tokens (adat_…). Only /mcp sets this — OAuth tokens are bound to that audience. */
+	allowOAuth?: boolean;
 }
 
 /**
@@ -89,7 +91,18 @@ export async function requireIntegrationPermission(
 	if (!raw) throw new ApiError(401, 'INVALID_CREDENTIAL', 'Missing or invalid bearer credential.');
 
 	// 2 + 3 — one lookup: credential → exactly one integration.
-	const rows = await sql<Row[]>`
+	const isOAuth = raw.startsWith('adat_');
+	if (isOAuth && !opts.allowOAuth) throw new ApiError(401, 'INVALID_CREDENTIAL', 'Missing or invalid bearer credential.');
+	const rows = isOAuth ? await sql<Row[]>`
+		SELECT t.id AS credential_id, t.expires_at, coalesce(t.revoked_at, g.revoked_at) AS revoked_at,
+		       i.id AS integration_id, i.name, i.account_id, i.default_user_id, i.status,
+		       i.permissions, i.allowed_ip_ranges::text[] AS allowed_ip_ranges, i.rate_limit_per_minute
+		FROM oauth_tokens t
+		JOIN oauth_grants g ON g.id = t.grant_id
+		JOIN integration_clients i ON i.id = g.integration_client_id
+		WHERE t.token_hash = ${hashCredential(raw)} AND t.kind = 'access'
+		LIMIT 1
+	` : await sql<Row[]>`
 		SELECT c.id AS credential_id, c.expires_at, c.revoked_at,
 		       i.id AS integration_id, i.name, i.account_id, i.default_user_id, i.status,
 		       i.permissions, i.allowed_ip_ranges::text[] AS allowed_ip_ranges, i.rate_limit_per_minute
@@ -135,9 +148,13 @@ export async function requireIntegrationPermission(
 	}
 
 	// Best-effort credential usage metadata (does not fail the request).
-	sql`UPDATE integration_credentials
-	    SET last_used_at = now(), last_used_ip = ${validInet(opts.clientIp)}
-	    WHERE id = ${row.credential_id}`.catch(() => {});
+	if (isOAuth) {
+		sql`UPDATE oauth_grants SET last_used_at = now() WHERE id = (SELECT grant_id FROM oauth_tokens WHERE id = ${row.credential_id})`.catch(() => {});
+	} else {
+		sql`UPDATE integration_credentials
+		    SET last_used_at = now(), last_used_ip = ${validInet(opts.clientIp)}
+		    WHERE id = ${row.credential_id}`.catch(() => {});
+	}
 
 	// 7 — isolated per integration (never one shared bucket per account).
 	const rl = await hitRateLimit(rateLimitKey(principal.integrationId), principal.rateLimitPerMinute, 60);

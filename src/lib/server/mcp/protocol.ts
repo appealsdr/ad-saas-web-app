@@ -31,7 +31,7 @@ export function toolResult(value: unknown, isError = false) {
 }
 
 /** Returns the JSON-RPC response object, or null for notifications. `audit.tool` is filled in for the caller's audit event. */
-export async function handleRpc(msg: RpcRequest, p: IntegrationPrincipal, audit: { tool?: string; permission?: string }): Promise<object | null> {
+export async function handleRpc(msg: RpcRequest, p: IntegrationPrincipal, audit: { tool?: string; permission?: string; errorCode?: string }): Promise<object | null> {
 	if (msg.id === undefined) return null; // notification (e.g. notifications/initialized)
 	const id = msg.id;
 	switch (msg.method) {
@@ -51,6 +51,7 @@ export async function handleRpc(msg: RpcRequest, p: IntegrationPrincipal, audit:
 			audit.tool = tool.name;
 			audit.permission = tool.permission;
 			if (!p.permissions.includes(tool.permission)) {
+				audit.errorCode = 'PERMISSION_DENIED';
 				return { jsonrpc: '2.0', id, result: toolResult({ error: { code: 'PERMISSION_DENIED', message: `This connection lacks the "${tool.permission}" permission.` } }, true) };
 			}
 			const args = params.arguments ?? {};
@@ -61,7 +62,10 @@ export async function handleRpc(msg: RpcRequest, p: IntegrationPrincipal, audit:
 			try {
 				return { jsonrpc: '2.0', id, result: toolResult(await tool.run(p, args as Record<string, unknown>)) };
 			} catch (e) {
-				if (e instanceof ApiError) return { jsonrpc: '2.0', id, result: toolResult({ error: { code: e.code, message: e.message } }, true) };
+				if (e instanceof ApiError) {
+					audit.errorCode = e.code;
+					return { jsonrpc: '2.0', id, result: toolResult({ error: { code: e.code, message: e.message } }, true) };
+				}
 				throw e;
 			}
 		}

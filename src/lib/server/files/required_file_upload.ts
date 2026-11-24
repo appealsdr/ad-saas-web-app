@@ -15,6 +15,8 @@ import { putObject, deleteObject, getRegion } from '../storage/s3';
 import { caseFileKey, storeFileKey } from '../storage/s3-paths';
 import { attachUploadToRequiredFile, type RequiredFile } from '../salesforce';
 import { logError, describeError } from '../error_log';
+import { scanBuffer, scanRequired } from './virus_scan';
+import { raiseAlert } from '../security/alerts';
 
 export const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
 
@@ -123,6 +125,20 @@ export interface UploadResult {
 
 export async function storeRequiredFileUpload(t: UploadTarget, input: UploadInput): Promise<UploadResult> {
 	const { mime } = validateUpload(t.slot, input);
+
+	// Virus scan BEFORE anything is written. Infected → rejected + alert; scanner down → rejected only when scanning is required.
+	const scan = await scanBuffer(input.bytes);
+	if (scan.status === 'infected') {
+		await raiseAlert({
+			kind: 'malware_upload', severity: 'high', accountId: t.store.account_id, subjectType: 'store', subjectId: t.store.id,
+			message: `An upload was blocked: malware signature "${scan.signature}" (file name "${input.fileName.slice(0, 80)}").`, dedupeSeconds: 60
+		});
+		throw new ApiError(422, 'MALWARE_DETECTED', 'The file was rejected because it appears to contain malware.');
+	}
+	if ((scan.status === 'error' || scan.status === 'skipped') && scanRequired()) {
+		if (scan.status === 'error') await logError({ source: 'api.v1', operation: 'required_files.virus_scan', accountId: t.store.account_id, errorMessage: scan.message });
+		throw new ApiError(503, 'SCAN_UNAVAILABLE', 'Files cannot be accepted right now because virus scanning is unavailable. Try again later.');
+	}
 	const docId = randomUUID();
 	const filename = safeFilename(input.fileName);
 	const key = t.caseId

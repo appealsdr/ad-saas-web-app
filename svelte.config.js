@@ -9,6 +9,9 @@ const config = {
 		adapter: adapter({
 			out: 'build'
 		}),
+		// Replaced by src/lib/server/csrf.ts (called from hooks.server.ts), which is identical except for the
+		// OAuth machine endpoints that MCP clients call without an Origin header.
+		csrf: { checkOrigin: false },
 		alias: {
 			$lib: 'src/lib',
 			$components: 'src/lib/components',
