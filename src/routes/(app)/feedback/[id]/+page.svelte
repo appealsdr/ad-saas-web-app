@@ -75,7 +75,7 @@
 		{:else}
 			<div class="feedback-body">{@html data.feedback.body ?? ''}</div>
 			<div style="margin-top:14px">
-				<button class="btn btn-outline btn-sm" on:click={startEdit}>Edit feedback</button>
+				<button class="btn btn-outline btn-sm" data-mutates on:click={startEdit}>Edit feedback</button>
 			</div>
 		{/if}
 	</div>

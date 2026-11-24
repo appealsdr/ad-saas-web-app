@@ -27,5 +27,15 @@ export const load: LayoutServerLoad = async ({ locals, url }) => {
 		throw redirect(303, '/onboarding');
 	}
 
-	return {};
+	// AD-1968: the global Messages tab is opt-in per account. Rollout-safe: missing column → disabled.
+	let messagesEnabled = false;
+	try {
+		const [m] = await sql<{ messages_enabled: boolean }[]>`
+			SELECT a.messages_enabled FROM accounts a JOIN users u ON u.account_id = a.id WHERE u.id = ${locals.user.id} LIMIT 1
+		`;
+		messagesEnabled = m?.messages_enabled === true;
+	} catch {
+		messagesEnabled = false;
+	}
+	return { messagesEnabled };
 };

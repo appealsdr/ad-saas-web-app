@@ -85,7 +85,7 @@
 					</div>
 				</li>
 			</ol>
-			<button class="btn btn-primary btn-lg" on:click={() => (showCreate = true)}>
+			<button class="btn btn-primary btn-lg" data-mutates on:click={() => (showCreate = true)}>
 				Add my first store
 			</button>
 			<div class="empty-hint">Nothing to pay yet</div>

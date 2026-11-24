@@ -42,8 +42,10 @@ async function resolveSelectedScope(user: User, url: URL): Promise<ConversationS
 	return resolveAccountScope(user);
 }
 
-export const load: PageServerLoad = async ({ locals, url }) => {
+export const load: PageServerLoad = async ({ locals, url, parent }) => {
 	if (!locals.user) throw redirect(303, '/login');
+	// AD-1968: the Messages page is only available to accounts an admin enabled it for.
+	if (!(await parent()).messagesEnabled) throw redirect(303, '/dashboard');
 	const user = locals.user;
 
 	const accountScope = await resolveAccountScope(user);

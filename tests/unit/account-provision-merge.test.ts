@@ -58,6 +58,25 @@ describe('buildCandidates', () => {
 	});
 });
 
+describe('buildCandidates without contracts (AD-1968)', () => {
+	it('lists accounts that have no contract, counting their contacts and stores, and still skips linked ones', () => {
+		const out = buildCandidates(
+			[],
+			[{ Id: SF_C, FirstName: 'A', LastName: 'B', Email: 'a@acme.com', AccountId: SF_A }],
+			[{ Id: 'a0X1', Name: 'Store 1', Account__c: SF_A, Seller_ID__c: null, Marketplaces__c: null }],
+			['001Vp00001Q2mpD'],
+			[
+				{ Id: SF_A, Name: 'Acme', Phone: null, Website: null, Primary_Email__c: 'a@acme.com' },
+				{ Id: '001Vp00001Q2mpDIAR', Name: 'Linked', Phone: null, Website: null, Primary_Email__c: null }
+			]
+		);
+		expect(out).toHaveLength(1);
+		expect(out[0]).toMatchObject({ name: 'Acme', contracts: [] });
+		expect(out[0].contacts).toHaveLength(1);
+		expect(out[0].stores).toHaveLength(1);
+	});
+});
+
 describe('attachMatches', () => {
 	it('flags platform accounts with the same email or normalised name, not the one already linked', () => {
 		const [cand] = buildCandidates([contract(SF_A, 'Acme LLC')], [], [], []);

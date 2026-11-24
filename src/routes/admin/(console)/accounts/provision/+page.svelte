@@ -13,7 +13,7 @@
 
 <h1 class="adm-h1">Account provision</h1>
 <p class="adm-sub">
-	Salesforce accounts that have service contracts but no platform account. Provisioning links the <em>existing</em> Salesforce records to a new platform
+	Salesforce accounts that are not on the platform yet (no platform ID) — with or without service contracts. Provisioning links the <em>existing</em> Salesforce records to a new platform
 	account (nothing is created in Salesforce), so the client's contracts and payments appear in the platform. Related stores can be provisioned with it.
 </p>
 
@@ -40,20 +40,20 @@
 	</div>
 	<p class="adm-muted" style="margin:8px 0 0">
 		{data.candidates.length} not provisioned · {data.alreadyLinked} already linked
-		{#if data.truncated} · showing the newest 2000 contracts only{/if}
+		{#if data.truncated} · showing the newest 2000 Salesforce accounts only{/if}
 	</p>
 </form>
 
 <div class="adm-card">
 	{#if data.candidates.length === 0 && !data.sfError}
-		<div class="adm-empty">Every Salesforce account with a contract is already on the platform.</div>
+		<div class="adm-empty">Every Salesforce account is already on the platform.</div>
 	{/if}
 	{#each data.candidates as c (c.sfdcAccountId)}
 		<details class="cand">
 			<summary>
 				<span class="nm">{c.name}</span>
 				<span class="adm-mono adm-muted">{c.sfdcAccountId}</span>
-				<span class="adm-muted">{c.contracts.length} contract{c.contracts.length === 1 ? '' : 's'} · {c.stores.length} store{c.stores.length === 1 ? '' : 's'}</span>
+				<span class="adm-muted">{c.contracts.length} contract{c.contracts.length === 1 ? '' : 's'} · {c.contacts.length} contact{c.contacts.length === 1 ? '' : 's'} · {c.stores.length} store{c.stores.length === 1 ? '' : 's'}</span>
 				{#if c.matches.length}<span class="warnchip">Possible existing platform account</span>{/if}
 			</summary>
 
@@ -72,7 +72,11 @@
 			<div class="cols">
 				<div>
 					<h3>Contracts</h3>
-					<ul>{#each c.contracts as k}<li>{k.name} <span class="adm-muted">{fmt(k.startDate)} → {fmt(k.endDate)}</span></li>{/each}</ul>
+					<ul>{#each c.contracts as k}<li>{k.name} <span class="adm-muted">{fmt(k.startDate)} → {fmt(k.endDate)}</span></li>{:else}<li class="adm-muted">None</li>{/each}</ul>
+				</div>
+				<div>
+					<h3>Stores</h3>
+					<ul>{#each c.stores as s}<li>{s.name}{#if s.sellerId} <span class="adm-muted">({s.sellerId})</span>{/if}</li>{:else}<li class="adm-muted">None</li>{/each}</ul>
 				</div>
 				<div>
 					<h3>Contacts</h3>
@@ -121,7 +125,7 @@
 	.cand summary { cursor: pointer; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; padding: 12px 0; }
 	.nm { font-weight: 700; color: var(--navy); }
 	.warnchip { background: #FEF3C7; color: #92400e; border-radius: 10px; padding: 2px 9px; font-size: 11px; font-weight: 700; }
-	.cols { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+	.cols { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
 	.cols h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--grey-text); margin: 8px 0 4px; }
 	.cols ul { margin: 0; padding-left: 18px; }
 	.chk { display: block; margin: 4px 0; }
