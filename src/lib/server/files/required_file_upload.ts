@@ -32,7 +32,8 @@ export const MIME_EXTENSIONS: Record<string, string[]> = {
 	'application/vnd.openxmlformats-officedocument.wordprocessingml.document': ['docx'],
 	'application/vnd.ms-excel': ['xls'],
 	'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['xlsx'],
-	'text/plain': ['txt'],
+	'text/plain': ['txt', 'log'],
+	'application/rtf': ['rtf'],
 	'text/csv': ['csv'],
 	'application/zip': ['zip']
 };
@@ -67,6 +68,7 @@ export function contentMatchesMime(bytes: Uint8Array, mime: string): boolean {
 		case 'application/msword':
 		case 'application/vnd.ms-excel':
 			return startsWith(bytes, [0xd0, 0xcf, 0x11, 0xe0]); // OLE2
+		case 'application/rtf': return startsWith(bytes, [0x7b, 0x5c, 0x72, 0x74, 0x66]); // {\rtf
 		case 'text/plain':
 		case 'text/csv':
 			return !bytes.subarray(0, 8192).includes(0);

@@ -71,6 +71,7 @@ export const INVENTORY: TableEntry[] = [
 	{ name: 'oauth_auth_codes', view: null, note: 'MCP OAuth authorization codes (hashes). Metadata only.', hidden: ['*'] },
 	{ name: 'oauth_tokens', view: null, note: 'MCP OAuth access/refresh tokens (hashes). Metadata only.', hidden: ['*'] },
 	{ name: 'security_alerts', view: null, note: 'Security alerts raised by the platform. Metadata only.', hidden: [] },
+	{ name: 'upload_links', view: null, note: 'One-time upload links created by the MCP connector (token hashes). Metadata only.', hidden: ['*'] },
 	{ name: 'admin_sql_active', view: null, note: 'Metadata only: operational lock table for the SQL runner.', hidden: ['*'] }
 ];
 

@@ -170,6 +170,7 @@ function trackAction(event: RequestEvent, status: number) {
 	if (['GET', 'HEAD', 'OPTIONS'].includes(event.request.method)) return;
 	const { pathname, search } = event.url;
 	if (pathname === '/api/activity') return;
+	if (pathname.startsWith('/upload/')) return; // the path holds a one-time upload token — never write it to the activity log
 	let ip: string | null = null;
 	try { ip = event.getClientAddress(); } catch { /* no address */ }
 	logActivity({

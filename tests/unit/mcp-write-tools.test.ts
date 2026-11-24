@@ -38,7 +38,7 @@ beforeEach(() => {
 
 describe('write tools are flagged for client approval', () => {
 	it('read tools are readOnly, write tools are not', () => {
-		for (const t of TOOLS) expect(t.annotations.readOnlyHint).toBe(!['upload_file', 'post_message'].includes(t.name));
+		for (const t of TOOLS) expect(t.annotations.readOnlyHint).toBe(!['upload_file', 'post_message', 'create_upload_link'].includes(t.name));
 	});
 });
 
