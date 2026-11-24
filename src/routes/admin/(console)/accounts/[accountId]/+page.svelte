@@ -101,19 +101,41 @@
 </div>
 
 <div class="adm-card card">
-	<form method="POST" action="?/set_messages" use:enhance class="msgrow">
-		<label><input type="checkbox" name="enabled" checked={data.messagesEnabled} disabled={!data.canEdit} on:change={(e) => e.currentTarget.form?.requestSubmit()} />
-			<strong>Enable Messages tab</strong></label>
-		<span class="adm-muted">Shows the global Messages page in this customer's sidebar. Account and store message panels always work.</span>
-	</form>
-	<div class="msgrow" style="margin-top:12px">
-		<form method="POST" action="?/set_mcp" use:enhance class="msgrow">
-			<label><input type="checkbox" name="enabled" checked={data.mcpEnabled} disabled={!data.canEdit} on:change={(e) => e.currentTarget.form?.requestSubmit()} />
-				<strong>Enable AI assistant connector</strong></label>
-			<span class="adm-muted">Lets this account's owners/admins connect an assistant (Claude) through sign-in, and lets API keys use /mcp. Turning it off disconnects every assistant.</span>
+	<div class="head">
+		<div>
+			<h2>Features</h2>
+			<div class="adm-muted">Turn optional features on or off for this customer.</div>
+		</div>
+	</div>
+
+	<div class="feat">
+		<div class="ftext">
+			<div class="ftitle">Messages tab</div>
+			<div class="adm-muted">Shows the global Messages page in the customer's sidebar. Account and store message panels always work.</div>
+		</div>
+		<form method="POST" action="?/set_messages" use:enhance class="fctl">
+			<span class="state" class:on={data.messagesEnabled}>{data.messagesEnabled ? 'On' : 'Off'}</span>
+			<label class="switch">
+				<input type="checkbox" role="switch" name="enabled" checked={data.messagesEnabled} disabled={!data.canEdit} aria-label="Messages tab" on:change={(e) => e.currentTarget.form?.requestSubmit()} />
+				<span class="track"></span>
+			</label>
 		</form>
-		<form method="POST" action="?/revoke_connections" use:enhance>
-			<button class="adm-btn outline danger-text" type="submit" disabled={!data.canEdit} title="Disconnect every assistant of this account now">Revoke all connections</button>
+	</div>
+
+	<div class="feat">
+		<div class="ftext">
+			<div class="ftitle">AI assistant connector</div>
+			<div class="adm-muted">Lets this account's owners and admins connect an assistant such as Claude, and lets API keys use <code>/mcp</code>. Turning it off disconnects every assistant.</div>
+			<form method="POST" action="?/revoke_connections" use:enhance class="fsub">
+				<button class="adm-btn outline danger-text" type="submit" disabled={!data.canEdit} title="Disconnect every assistant of this account now">Revoke all connections</button>
+			</form>
+		</div>
+		<form method="POST" action="?/set_mcp" use:enhance class="fctl">
+			<span class="state" class:on={data.mcpEnabled}>{data.mcpEnabled ? 'On' : 'Off'}</span>
+			<label class="switch">
+				<input type="checkbox" role="switch" name="enabled" checked={data.mcpEnabled} disabled={!data.canEdit} aria-label="AI assistant connector" on:change={(e) => e.currentTarget.form?.requestSubmit()} />
+				<span class="track"></span>
+			</label>
 		</form>
 	</div>
 </div>
@@ -222,7 +244,24 @@
 </form>
 
 <style>
-	.msgrow { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
+	.feat { display: flex; justify-content: space-between; align-items: flex-start; gap: 24px; padding: 16px 20px; }
+	.feat + .feat { border-top: 1px solid var(--grey-line); }
+	.ftext { min-width: 0; max-width: 640px; display: flex; flex-direction: column; gap: 4px; }
+	.ftitle { font-size: 14px; font-weight: 700; color: var(--navy); }
+	.fsub { margin-top: 8px; }
+	.fctl { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+	.state { font-size: 11px; font-weight: 700; padding: 2px 9px; border-radius: 10px; background: #F1F4F9; color: var(--grey-text); }
+	.state.on { background: #DCFCE7; color: #166534; }
+	.switch { position: relative; display: inline-block; width: 40px; height: 22px; cursor: pointer; }
+	.switch input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: inherit; z-index: 1; }
+	.track { position: absolute; inset: 0; border-radius: 22px; background: #CBD5E1; transition: background .15s; }
+	.track::after { content: ''; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.3); transition: transform .15s; }
+	.switch input:checked + .track { background: #16A34A; }
+	.switch input:checked + .track::after { transform: translateX(18px); }
+	.switch input:focus-visible + .track { outline: 2px solid var(--navy); outline-offset: 2px; }
+	.switch input:disabled { cursor: not-allowed; }
+	.switch input:disabled + .track { opacity: .5; }
+	@media (max-width: 640px) { .feat { flex-direction: column; gap: 12px; } }
 	.sfbar { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; border: 1px solid; border-radius: 10px; padding: 10px 16px; font-size: 13px; margin-bottom: 16px; }
 	.idbtn { background: rgba(255,255,255,.7); border: 1px solid currentColor; border-radius: 6px; padding: 0 6px; margin-left: 6px; font-family: ui-monospace, Menlo, monospace; font-size: 11px; color: inherit; cursor: pointer; }
 	.obj { font-size: 12px; } .obj code { background: rgba(255,255,255,.7); padding: 1px 6px; border-radius: 5px; }

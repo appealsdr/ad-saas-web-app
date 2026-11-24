@@ -8,6 +8,9 @@
  *  - output is trimmed to the API's serializers (no internal columns) and size-capped by the protocol layer.
  */
 import { sql } from '../db';
+import { env } from '$env/dynamic/private';
+import { loadActionItems } from './action_items';
+import { createUploadLink, UPLOAD_LINK_TTL_MS } from './upload_links';
 import { ApiError } from '../integrations/errors';
 import type { IntegrationPrincipal } from '../integrations/auth';
 import type { IntegrationPermission } from '../integrations/permissions';
@@ -65,6 +68,58 @@ const WRITE_NOTE = ' Without confirm=true this only PREVIEWS what would happen a
 const BASE64_RE = /^[A-Za-z0-9+/]+={0,2}$/;
 
 export const TOOLS: McpTool[] = [
+	{
+		name: 'get_action_items', permission: 'stores.list', annotations: READ,
+		description:
+			'START HERE when the customer asks what they need to do, what is outstanding, or "what needs my attention". Returns ONE prioritised list across all their stores: ' +
+			'documents still to upload, cases waiting for their reply, draft cases, and store setup gaps — each with plain-language text (say), why it matters, and how to complete it. ' +
+			'Follow howToPresent: summarise briefly, then walk through the items ONE AT A TIME.',
+		inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+		async run(p) {
+			return loadActionItems(p);
+		}
+	},
+	{
+		name: 'create_upload_link', permission: 'files.upload',
+		annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+		description:
+			'Create a one-time link (valid 15 minutes) where the customer uploads a REAL file into ONE required-file slot from their browser — use it for anything bigger than a short text, ' +
+			'or when they have a file on their computer (up to 25 MB). Give the customer the url and tell them to open it, choose the file and press Upload; then re-check the slot with list_required_files. ' +
+			'The link only works for this slot, once. A slot that already has a file needs replaceExisting=true (adds a new version). Does not upload anything by itself.',
+		inputSchema: {
+			type: 'object',
+			properties: {
+				storeId: ID,
+				caseId: { ...ID, description: 'Optional. Omit for a store-level slot.' },
+				requiredFileId: { ...ID, description: 'Slot id from list_required_files / get_action_items.' },
+				replaceExisting: { type: 'boolean', description: 'Allow adding a new version when the slot already has a file.' }
+			},
+			required: ['storeId', 'requiredFileId'], additionalProperties: false
+		},
+		async run(p, a) {
+			const origin = (env.ORIGIN || '').replace(/\/$/, '');
+			if (!/^https:\/\//.test(origin)) throw new ApiError(503, 'NOT_CONFIGURED', 'Upload links are not available right now (the public address is not configured).');
+			const store = await requireIntegrationStore(p.accountId, requireUuid(str(a, 'storeId'), 'Store'));
+			const slotId = requireSfId(str(a, 'requiredFileId'), 'Required file');
+			const caseId = a.caseId === undefined ? undefined : requireSfId(str(a, 'caseId'), 'Case');
+			if (caseId) await requireIntegrationCase(store, caseId, p.accountId);
+			const slot = caseId ? await requireIntegrationRequiredFile(caseId, slotId) : await requireIntegrationStoreRequiredFile(store, slotId);
+			const replaceExisting = a.replaceExisting === true;
+			if (slot.uploaded && !replaceExisting) throw new ApiError(409, 'SLOT_ALREADY_UPLOADED', 'This slot already has a file. Pass replaceExisting=true to add a new version.');
+			const link = await createUploadLink({
+				accountId: p.accountId, storeId: store.id, caseId: caseId ?? null, requiredFileId: slot.id,
+				replaceExisting, userId: p.defaultUserId, integrationId: p.integrationId
+			});
+			if (!link) throw new ApiError(429, 'RATE_LIMITED', 'Too many open upload links. Use or wait for the existing ones to expire.');
+			return {
+				url: `${origin}/upload/${link.token}`,
+				expiresAt: link.expiresAt.toISOString(),
+				validForMinutes: UPLOAD_LINK_TTL_MS / 60000,
+				slot: { id: slot.id, name: slot.name, acceptedFormats: slot.acceptedFormats },
+				tellTheCustomer: `Open this link, choose your file (${slot.acceptedFormats.join(', ') || 'any allowed type'}, up to 25 MB) and press Upload. It works once and expires in ${UPLOAD_LINK_TTL_MS / 60000} minutes. Tell me when you are done and I will check it arrived.`
+			};
+		}
+	},
 	{
 		name: 'list_stores', permission: 'stores.list', annotations: READ,
 		description: 'List the stores of the connected account (newest first).',

@@ -1,7 +1,19 @@
 # AI assistant connector (MCP) — operations (AD-1969)
 
-Endpoint: `POST /mcp` (Streamable HTTP, stateless). Tools: `list_stores`, `get_store`, `list_cases`, `get_case`, `list_messages`,
-`list_required_files` (read) and `upload_file`, `post_message` (write — preview unless `confirm=true`).
+Endpoint: `POST /mcp` (Streamable HTTP, stateless). Tools: `get_action_items`, `list_stores`, `get_store`, `list_cases`, `get_case`, `list_messages`,
+`list_required_files` (read), `upload_file`, `post_message` (write — preview unless `confirm=true`) and `create_upload_link` (creates a one-time link, uploads nothing itself).
+Prompts: `whats_needed` ("What needs my attention?") and `upload_document`.
+
+## "What needs my attention" + guided uploads (migration 043)
+- `get_action_items` returns ONE prioritised list across the account's stores: cases waiting for the customer's reply, missing required files (case and store level),
+  draft cases, and store setup gaps (Amazon not connected, missing details). Each item has plain-language `say`/`why` text and `howToComplete`; `howToPresent` tells
+  the assistant to summarise, then go one item at a time. Sections the connection may not read are skipped and listed in `notChecked`. Bounded: 25 stores, 15 open cases, 10 message checks per call.
+- Real files: `create_upload_link` returns `https://<app-host>/upload/<token>` for ONE slot. The customer opens it, picks the file (up to 25 MB) and presses Upload — no base64 through chat.
+  The link is single-use, expires in 15 minutes, only its SHA-256 is stored (`upload_links`), max 20 open links per connection, and the kill switches apply. The upload goes through the same
+  checks as the API (accepted formats, content sniffing, ClamAV, Salesforce sync) and is audited as `upload_link.upload`. A failed attempt hands the link back so the customer can retry.
+- Short text can still be pasted via `upload_file`. `/upload/*` paths are excluded from the activity log because the path carries the token.
+- Requires `ORIGIN` to be the public **https** origin (links are refused otherwise).
+
 
 ## How customers connect (no keys)
 Claude → Settings → Connectors → add `https://<app-host>/mcp`. Claude discovers OAuth from `/.well-known/oauth-protected-resource/mcp`,
@@ -11,7 +23,7 @@ Access tokens last 15 min, refresh tokens 30 days and rotate; replaying an old r
 Admin-issued integration keys (API → integrations) also work on `/mcp`.
 
 ## Turning it on (it is OFF by default)
-1. Apply migration `042_mcp_oauth_alerts_killswitch.sql`.
+1. Apply migrations `042_mcp_oauth_alerts_killswitch.sql` and `043_mcp_upload_links.sql`.
 2. Admin → Accounts → *account* → **Enable AI assistant connector** (per-account switch).
 3. Admin → **Security** shows the global kill switch, alerts and active connections.
 
