@@ -15,6 +15,12 @@ Prompts: `whats_needed` ("What needs my attention?") and `upload_document`.
 - Requires `ORIGIN` to be the public **https** origin (links are refused otherwise).
 
 
+## Links and readable output
+- Every store, case and required-file record returned by the tools has a `url` that opens the exact page in the web app (`/stores/<id>`, `/stores/<id>/issues/<caseId>`, `/stores/<id>#store-documents`). `get_action_items` also returns a ready-made markdown `checklist`.
+  Links carry ids only and need the normal sign-in. They are built from `ORIGIN`; without an https `ORIGIN` the `url` fields are simply omitted.
+- `list_messages` returns plain `text` (line breaks kept, HTML removed), `fromOurTeam` (true = our staff) and the case `url`, instead of raw HTML.
+- Server instructions tell the assistant to link records, keep replies short, and not show raw JSON or ids. Formatting is the assistant's own: the connector supplies links and clean text, not UI.
+
 ## How customers connect (no keys)
 Claude → Settings → Connectors → add `https://<app-host>/mcp`. Claude discovers OAuth from `/.well-known/oauth-protected-resource/mcp`,
 registers itself (`/oauth/register`), and opens `/oauth/authorize`: the customer signs in, ticks what to allow, and approves.

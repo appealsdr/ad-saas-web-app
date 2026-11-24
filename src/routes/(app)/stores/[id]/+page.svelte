@@ -300,7 +300,7 @@
 			</div>
 		</div>
 
-		<div class="card tall">
+		<div class="card tall" id="store-documents">
 			<div class="card-title">
 				Store Documents
 				<span class="muted-sm">{uploadedCount} of {data.requiredFiles.length} uploaded</span>
