@@ -5,7 +5,7 @@
  */
 import { sql } from '../db';
 import { ApiError } from './errors';
-import { findCaseStoreLookup, listRequiredFilesForCase, type RequiredFile } from '../salesforce';
+import { findCaseStoreLookup, listRequiredFilesForCase, listRequiredFilesForStore, type RequiredFile } from '../salesforce';
 
 export interface ApiStore {
 	id: string;
@@ -50,6 +50,16 @@ export async function requireIntegrationCase(store: ApiStore, caseId: string, ac
 /** The required-file slot must belong to the (already verified) case. */
 export async function requireIntegrationRequiredFile(caseId: string, requiredFileId: string): Promise<RequiredFile> {
 	const res = await listRequiredFilesForCase(caseId);
+	if (!res.ok) throw new ApiError(502, 'UPSTREAM_ERROR', 'Could not load required files right now.');
+	const f = res.files.find((x) => x.id === requiredFileId);
+	if (!f) throw new ApiError(404, 'NOT_FOUND', 'Required file not found.');
+	return f;
+}
+
+/** Store-level slot: must belong to this (already verified) store's Salesforce Store__c. */
+export async function requireIntegrationStoreRequiredFile(store: ApiStore, requiredFileId: string): Promise<RequiredFile> {
+	if (!store.sfdc_store_id) throw new ApiError(404, 'NOT_FOUND', 'Required file not found.');
+	const res = await listRequiredFilesForStore(store.sfdc_store_id);
 	if (!res.ok) throw new ApiError(502, 'UPSTREAM_ERROR', 'Could not load required files right now.');
 	const f = res.files.find((x) => x.id === requiredFileId);
 	if (!f) throw new ApiError(404, 'NOT_FOUND', 'Required file not found.');

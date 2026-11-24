@@ -174,13 +174,37 @@ export const ENDPOINTS: EndpointDoc[] = [
 		headers: [
 			{ name: 'Content-Type', type: 'string', required: true, note: 'The file’s MIME type: pdf, png, jpeg, gif, webp, heic, doc/docx, xls/xlsx, txt, csv, zip.' },
 			{ name: 'X-File-Name', type: 'string ≤255', required: true, note: 'Original file name incl. extension (URL-encode special characters).' },
+			{ name: 'X-Replace-Existing', type: 'true', note: 'Required to upload into a slot that already has a file; the new file becomes the current version and the old one is kept.' },
 			IDEM
 		],
 		requestExample: `curl -X POST "$BASE/api/v1/stores/$STORE/cases/$CASE/required-files/$SLOT/uploads" \\\n  -H "Authorization: Bearer $KEY" \\\n  -H "Content-Type: application/pdf" \\\n  -H "X-File-Name: id-proof.pdf" \\\n  --data-binary @id-proof.pdf`,
 		status: '201 Created',
 		responseExample: `{\n  "data": {\n    "id": "0b6d7f0a-1c1e-4b8e-8c52-5a4f0c2e9d10",\n    "requiredFileId": "a0YHn00000LmNoPQAV",\n    "fileName": "id-proof.pdf",\n    "contentType": "application/pdf",\n    "sizeBytes": 183422\n  },\n  "salesforceSynced": true\n}`,
 		notes: ['The file is the raw request body — not multipart/form-data.', 'Maximum 25 MB per file. If the slot lists accepted formats, the extension must match one.'],
-		errors: [['413', 'File larger than 25 MB'], ['415', 'File type not allowed'], ['422', 'Missing X-File-Name, empty file, or extension not accepted by this slot']]
+		errors: [['409', 'SLOT_ALREADY_UPLOADED — send X-Replace-Existing: true'], ['413', 'File larger than 25 MB'], ['415', 'File type not allowed, or the content does not match its type'], ['422', 'Missing X-File-Name, empty file, or extension not accepted by this slot']]
+	},
+	{
+		permission: 'files.requirements.read', group: 'Files', method: 'GET', path: '/api/v1/stores/{storeId}/required-files', title: 'Read store-level required files',
+		means: 'Lists the documents we need for the store itself (for example onboarding documents), not tied to one case, and whether each has been provided.',
+		youGet: 'The same slot entries as the case-level list: id, name, instructions, accepted formats, uploaded status. Use the slot id to upload.',
+		status: '200 OK',
+		responseExample: `{ "data": [ { "id": "a0YHn00000LmNoPQAV", "name": "Onboarding Documents", "acceptedFormats": ["pdf"], "uploaded": false } ] }`,
+		errors: [['404', 'Store not found']]
+	},
+	{
+		permission: 'files.upload', group: 'Files', method: 'POST', path: '/api/v1/stores/{storeId}/required-files/{requiredFileId}/uploads', title: 'Upload a file into a store-level required-file slot',
+		means: 'Sends one document into one of the store’s own required-file slots. Same rules, headers and response as the case-level upload.',
+		youGet: 'A confirmation with the stored file’s id, name, type and size (HTTP 201).',
+		headers: [
+			{ name: 'Content-Type', type: 'string', required: true, note: 'The file’s MIME type.' },
+			{ name: 'X-File-Name', type: 'string ≤255', required: true, note: 'Original file name incl. extension (URL-encode special characters).' },
+			{ name: 'X-Replace-Existing', type: 'true', note: 'Required when the slot already has a file.' },
+			IDEM
+		],
+		requestExample: `curl -X POST "$BASE/api/v1/stores/$STORE/required-files/$SLOT/uploads" \\\n  -H "Authorization: Bearer $KEY" \\\n  -H "Content-Type: application/pdf" \\\n  -H "X-File-Name: id-proof.pdf" \\\n  --data-binary @id-proof.pdf`,
+		status: '201 Created',
+		responseExample: `{ "data": { "id": "0b6d7f0a-1c1e-4b8e-8c52-5a4f0c2e9d10", "requiredFileId": "a0YHn00000LmNoPQAV", "fileName": "id-proof.pdf", "contentType": "application/pdf", "sizeBytes": 183422 }, "salesforceSynced": true }`,
+		errors: [['404', 'Store or required file not found'], ['409', 'SLOT_ALREADY_UPLOADED'], ['413', 'File larger than 25 MB'], ['415', 'File type not allowed'], ['422', 'Validation error']]
 	}
 ];
 
