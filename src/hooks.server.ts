@@ -23,6 +23,8 @@ import {
 } from '$lib/server/admin/sessions';
 import { adminOriginOk } from '$lib/server/admin/origin';
 import { env } from '$env/dynamic/private';
+import { dev } from '$app/environment';
+import { crossSiteFormBlocked } from '$lib/server/csrf';
 
 /** Paths that are governed by PLATFORM STAFF auth (separate cookie/session) instead of customer auth. */
 function isAdminPath(pathname: string): boolean {
@@ -82,6 +84,16 @@ export const handle: Handle = async ({ event, resolve }) => {
 	const requestId = randomUUID();
 	event.locals.requestId = requestId;
 	event.setHeaders({ 'x-request-id': requestId });
+	// Same rule as SvelteKit's built-in CSRF check (disabled in svelte.config.js), minus the OAuth machine endpoints.
+	if (!dev && crossSiteFormBlocked({
+		method: event.request.method,
+		contentType: event.request.headers.get('content-type'),
+		origin: event.request.headers.get('origin'),
+		urlOrigin: event.url.origin,
+		pathname: event.url.pathname
+	})) {
+		return new Response(`Cross-site ${event.request.method} form submissions are forbidden`, { status: 403 });
+	}
 	return requestContext.run({ requestId }, () => {
 		if (isAdminPath(event.url.pathname)) return handleAdmin(event, resolve);
 		return handleCustomer({ event, resolve });

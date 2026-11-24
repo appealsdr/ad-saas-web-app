@@ -37,5 +37,16 @@ export const load: LayoutServerLoad = async ({ locals, url }) => {
 	} catch {
 		messagesEnabled = false;
 	}
-	return { messagesEnabled };
+	// AD-1969: AI-assistant connector is opt-in per account (also needs the global switch). Same rollout-safe pattern.
+	let mcpEnabled = false;
+	try {
+		const [m] = await sql<{ mcp_enabled: boolean; on: boolean | null }[]>`
+			SELECT a.mcp_enabled, (SELECT bool_value FROM platform_flags WHERE key = 'mcp_enabled') AS on
+			FROM accounts a JOIN users u ON u.account_id = a.id WHERE u.id = ${locals.user.id} LIMIT 1
+		`;
+		mcpEnabled = m?.mcp_enabled === true && m?.on === true;
+	} catch {
+		mcpEnabled = false;
+	}
+	return { messagesEnabled, mcpEnabled };
 };

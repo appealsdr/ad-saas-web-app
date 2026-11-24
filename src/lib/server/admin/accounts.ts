@@ -151,6 +151,16 @@ export async function getMessagesEnabled(accountId: string): Promise<boolean> {
 	}
 }
 
+/** Whether the AI connector is on for this account (the per-account kill switch). Rollout-safe: false before migration 042. */
+export async function getMcpEnabled(accountId: string): Promise<boolean> {
+	try {
+		const [r] = await sql<{ mcp_enabled: boolean }[]>`SELECT mcp_enabled FROM accounts WHERE id = ${accountId}`;
+		return r?.mcp_enabled === true;
+	} catch {
+		return false;
+	}
+}
+
 export async function accountSummary(accountId: string) {
 	const [r] = await sql<
 		{ users: number; active_users: number; stores: number; connected_stores: number; contracts: number; owner_email: string | null }[]

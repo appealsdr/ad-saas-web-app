@@ -106,6 +106,16 @@
 			<strong>Enable Messages tab</strong></label>
 		<span class="adm-muted">Shows the global Messages page in this customer's sidebar. Account and store message panels always work.</span>
 	</form>
+	<div class="msgrow" style="margin-top:12px">
+		<form method="POST" action="?/set_mcp" use:enhance class="msgrow">
+			<label><input type="checkbox" name="enabled" checked={data.mcpEnabled} disabled={!data.canEdit} on:change={(e) => e.currentTarget.form?.requestSubmit()} />
+				<strong>Enable AI assistant connector</strong></label>
+			<span class="adm-muted">Lets this account's owners/admins connect an assistant (Claude) through sign-in, and lets API keys use /mcp. Turning it off disconnects every assistant.</span>
+		</form>
+		<form method="POST" action="?/revoke_connections" use:enhance>
+			<button class="adm-btn outline danger-text" type="submit" disabled={!data.canEdit} title="Disconnect every assistant of this account now">Revoke all connections</button>
+		</form>
+	</div>
 </div>
 
 <div class="adm-card card">

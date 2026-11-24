@@ -35,6 +35,15 @@ services:
       timeout: 5s
       retries: 5
 
+  # Optional virus scanner for API/MCP uploads. Set CLAMAV_HOST=localhost (and VIRUS_SCAN_REQUIRED=true in production).
+  clamav:
+    image: clamav/clamav:stable
+    container_name: samdoctor-clamav
+    restart: unless-stopped
+    ports:
+      - "3310:3310"
+    profiles: ["scan"]
+
 volumes:
   postgres_data:
   redis_data:

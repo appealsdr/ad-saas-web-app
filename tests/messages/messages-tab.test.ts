@@ -40,7 +40,7 @@ describe('/messages load', () => {
 		conv.resolveAccountScope.mockResolvedValue(scope);
 		conv.loadConversationSafe.mockResolvedValue({ messages: [] });
 		overviewMod.loadMessagesOverview.mockResolvedValue({ stores: [], totalUnread: 0 });
-		const res: any = await (load as any)({ locals: { user: USER }, url: new URL('http://x/messages?accountId=evil') });
+		const res: any = await (load as any)({ locals: { user: USER }, url: new URL('http://x/messages?accountId=evil'), parent: async () => ({ messagesEnabled: true }) });
 		expect(conv.resolveAccountScope).toHaveBeenCalledWith(USER);
 		expect(res.account).toEqual({ name: 'Acme' });
 		await expect(res.conversation).resolves.toEqual({ messages: [] });
@@ -49,22 +49,30 @@ describe('/messages load', () => {
 	});
 	it('returns an empty state when the user has no account', async () => {
 		conv.resolveAccountScope.mockResolvedValue(null);
-		const res: any = await (load as any)({ locals: { user: USER }, url: new URL('http://x/messages') });
+		const res: any = await (load as any)({ locals: { user: USER }, url: new URL('http://x/messages'), parent: async () => ({ messagesEnabled: true }) });
 		expect(res.account).toBeNull();
 	});
 	it('an overview failure degrades to null instead of breaking the page', async () => {
 		conv.resolveAccountScope.mockResolvedValue(scope);
 		conv.loadConversationSafe.mockResolvedValue({ messages: [] });
 		overviewMod.loadMessagesOverview.mockRejectedValue(new Error('sf down'));
-		const res: any = await (load as any)({ locals: { user: USER }, url: new URL('http://x/messages') });
+		const res: any = await (load as any)({ locals: { user: USER }, url: new URL('http://x/messages'), parent: async () => ({ messagesEnabled: true }) });
 		await expect(res.overview).resolves.toBeNull();
+	});
+});
+
+describe('/messages is opt-in per account (AD-1968)', () => {
+	it('redirects to the dashboard when an admin has not enabled Messages for the account', async () => {
+		await expect((load as any)({ locals: { user: USER }, url: new URL('http://x/messages'), parent: async () => ({ messagesEnabled: false }) }))
+			.rejects.toMatchObject({ status: 303, location: '/dashboard' });
+		expect(conv.resolveAccountScope).not.toHaveBeenCalled();
 	});
 });
 
 describe('/messages conversation selection (account / store / case)', () => {
 	const storeScope = { ...scope, kind: 'store', contextType: 'Store__c', contextId: 'a01000000000001AAA' };
 	const caseScope = { ...scope, kind: 'case', contextType: 'Case', contextId: '500000000000001AAA' };
-	const run = (qs: string) => (load as any)({ locals: { user: USER }, url: new URL(`http://x/messages${qs}`) });
+	const run = (qs: string) => (load as any)({ locals: { user: USER }, url: new URL(`http://x/messages${qs}`), parent: async () => ({ messagesEnabled: true }) });
 	beforeEach(() => {
 		conv.resolveAccountScope.mockResolvedValue(scope);
 		conv.loadConversationSafe.mockResolvedValue({ messages: [] });

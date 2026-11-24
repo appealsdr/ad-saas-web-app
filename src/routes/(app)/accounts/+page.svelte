@@ -134,6 +134,7 @@
 				{/if}
 			</div>
 			{#if subtitleBits.length}<div class="hero-sub">{subtitleBits.join(' · ')}</div>{/if}
+			{#if $page.data.mcpEnabled}<div class="hero-sub"><a href="/accounts/connections">Connected AI assistants →</a></div>{/if}
 		</div>
 		{#if plan}
 			<button type="button" class="plan-chip" title="View subscription & plans" on:click={() => (plansOpen = true)}>

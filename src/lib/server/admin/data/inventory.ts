@@ -30,7 +30,7 @@ const viaUsers = (col = 'user_id'): AccountScopeFn => (id) =>
 	sql`${sql(col)} IN (SELECT id FROM reporting.users WHERE account_id = ${id})`;
 
 export const INVENTORY: TableEntry[] = [
-	{ name: 'accounts', view: 'accounts', note: 'Customer accounts.', hidden: ['merged_into_account_id', 'merged_at'], accountScope: own('id'), accountScopeNote: 'accounts.id = account' },
+	{ name: 'accounts', view: 'accounts', note: 'Customer accounts.', hidden: ['merged_into_account_id', 'merged_at', 'messages_enabled', 'mcp_enabled'], accountScope: own('id'), accountScopeNote: 'accounts.id = account' },
 	{ name: 'users', view: 'users', note: 'Customer users. Password hash omitted.', hidden: ['password_hash', 'avatar_url', 'email_verification_pending', 'username'], accountScope: own('account_id'), accountScopeNote: 'users.account_id = account' },
 	{ name: 'account_contacts', view: 'account_contacts', note: 'Account contacts. Invite tokens omitted.', hidden: ['invite_token'], accountScope: own('account_id'), accountScopeNote: 'account_contacts.account_id = account' },
 	{ name: 'stores', view: 'stores', note: 'Stores. SP-API tokens and OAuth callback params omitted.', hidden: ['spapi_refresh_token', 'spapi_access_token', 'spapi_callback_params'], accountScope: own('account_id'), accountScopeNote: 'stores.account_id = account' },
@@ -65,6 +65,12 @@ export const INVENTORY: TableEntry[] = [
 	{ name: 'balance_payment_applications', view: null, note: 'Idempotency ledger for deposit balance payments (PaymentIntent → Payment__c). Metadata only.', hidden: [] },
 	{ name: 'admin_login_challenges', view: null, note: 'Metadata only: every column is security state (token hash, attempts, next path).', hidden: ['*'] },
 	{ name: 'admin_rate_limits', view: null, note: 'Metadata only: rate-limit keys embed emails and IP addresses.', hidden: ['*'] },
+	{ name: 'platform_flags', view: null, note: 'Platform-wide switches (MCP kill switch). Metadata only.', hidden: [] },
+	{ name: 'oauth_clients', view: null, note: 'MCP OAuth clients registered dynamically (public clients). Metadata only.', hidden: [] },
+	{ name: 'oauth_grants', view: null, note: 'MCP connections: which user connected which client with which scopes. Metadata only.', hidden: [] },
+	{ name: 'oauth_auth_codes', view: null, note: 'MCP OAuth authorization codes (hashes). Metadata only.', hidden: ['*'] },
+	{ name: 'oauth_tokens', view: null, note: 'MCP OAuth access/refresh tokens (hashes). Metadata only.', hidden: ['*'] },
+	{ name: 'security_alerts', view: null, note: 'Security alerts raised by the platform. Metadata only.', hidden: [] },
 	{ name: 'admin_sql_active', view: null, note: 'Metadata only: operational lock table for the SQL runner.', hidden: ['*'] }
 ];
 
