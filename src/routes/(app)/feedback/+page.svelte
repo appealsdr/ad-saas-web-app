@@ -33,7 +33,7 @@
 <svelte:head><title>Feedback — Appeals Doctor</title></svelte:head>
 
 <Topbar title="Feedback" subtitle="Share feedback about a feature or your experience">
-	<button class="btn btn-primary btn-sm" on:click={() => (showNewForm = !showNewForm)}>
+	<button class="btn btn-primary btn-sm" data-mutates on:click={() => (showNewForm = !showNewForm)}>
 		{showNewForm ? 'Cancel' : '+ New feedback'}
 	</button>
 </Topbar>

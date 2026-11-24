@@ -8,6 +8,10 @@
  * Sign-out and "exit view-as" forms are left alone.
  */
 const ALLOWED_ACTIONS = ['/auth/logout', '/auth/impersonation-exit'];
+const MUTATING_LINKS = ['/payments/pay/', '/checkout', 'step=connect']
+	.map((p) => `a[href*="${p}"]`)
+	.concat('a[href$="/services"]')
+	.join(',');
 const TITLE = 'Read-only mode — viewing as a customer';
 
 function lock(el: Element) {
@@ -25,11 +29,18 @@ function lock(el: Element) {
 
 function sweep(root: ParentNode) {
 	root.querySelectorAll('[data-mutates]').forEach(lock);
+	// Links that start a purchase / connect / buy flow are never usable in a read-only view, even if untagged.
+	root.querySelectorAll(MUTATING_LINKS).forEach(lock);
 	root.querySelectorAll('form').forEach((f) => {
 		if ((f.getAttribute('method') ?? 'get').toLowerCase() !== 'post') return;
 		const action = f.getAttribute('action') ?? '';
 		if (ALLOWED_ACTIONS.some((a) => action.startsWith(a))) return;
 		f.querySelectorAll('button, input, select, textarea, [contenteditable]').forEach(lock);
+	});
+	// Any submit control or file input is a mutation, with or without a surrounding <form>.
+	root.querySelectorAll('button[type="submit"], input[type="submit"], input[type="file"]').forEach((el) => {
+		const action = el.closest('form')?.getAttribute('action') ?? '';
+		if (!ALLOWED_ACTIONS.some((a) => action.startsWith(a))) lock(el);
 	});
 }
 

@@ -386,7 +386,7 @@
 						<div class="rf-uploaded-head">
 							<div class="rf-section-title" style="margin:0">Uploaded files · {slotUploads.length}</div>
 							{#if multiple}
-								<button type="button" class="rf-outline-btn" on:click={() => startAdding()}>+ Add more files</button>
+								<button type="button" class="rf-outline-btn" data-mutates on:click={() => startAdding()}>+ Add more files</button>
 							{/if}
 						</div>
 						{#each slotUploads as u (u.localDocId ?? u.fileName)}
@@ -399,7 +399,7 @@
 									</span>
 								</button>
 								<div class="rf-file-actions">
-									<button type="button" class="rf-outline-btn sm" title="Upload a new version of this file"
+									<button type="button" class="rf-outline-btn sm" data-mutates title="Upload a new version of this file"
 										on:click={() => startAdding(u.localDocId)}>New version</button>
 									<form method="POST" action={clearAction} use:enhance style="display:inline">
 										<input type="hidden" name="requiredFileId" value={active.id} />

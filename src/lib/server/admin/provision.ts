@@ -1,5 +1,6 @@
 /**
- * Admin "Account provision" (AD-1944): Salesforce Accounts that have ServiceContracts but no platform account.
+ * Admin "Account provision" (AD-1944, AD-1968): Salesforce Accounts with a blank appealsdoctor_vuid__c and no platform account
+ * (service contracts are optional).
  *
  * Contracts of a linked account are read live from Salesforce (dashboard "Outstanding payments", /payments),
  * so linking the Salesforce Account to a platform account is what makes its contracts appear in the platform —
@@ -11,6 +12,7 @@
  */
 import { sql } from '../db';
 import { sfdcQuery } from '../salesforce/client';
+import { VUID_FIELD } from '../salesforce/vuid';
 import { fetchSalesforceAccount, fetchSalesforceContact, updateSalesforceAccount, updateSalesforceContact } from '../salesforce/records';
 import { updateSalesforceStore } from '../salesforce/stores';
 import { hashPassword } from '../auth/password';
@@ -36,6 +38,7 @@ export interface SfContractRow {
 	AccountId: string;
 	Account?: { Name: string | null; Phone: string | null; Website: string | null; Primary_Email__c: string | null } | null;
 }
+export interface SfAccountRow { Id: string; Name: string | null; Phone: string | null; Website: string | null; Primary_Email__c: string | null }
 export interface SfContactRow { Id: string; FirstName: string | null; LastName: string | null; Email: string | null; AccountId: string }
 export interface SfStoreRow { Id: string; Name: string; Account__c: string; Seller_ID__c: string | null; Marketplaces__c: string | null }
 
@@ -66,11 +69,20 @@ export function buildCandidates(
 	contracts: SfContractRow[],
 	contacts: SfContactRow[],
 	stores: SfStoreRow[],
-	linkedSfIds: Iterable<string>
+	linkedSfIds: Iterable<string>,
+	/** Accounts to list even when they have no contract (AD-1968: contracts are optional). */
+	accounts: SfAccountRow[] = []
 ): ProvisionCandidate[] {
 	const linked = new Set<string>();
 	for (const id of linkedSfIds) if (id) linked.add(id15(id));
 	const byAccount = new Map<string, ProvisionCandidate>();
+	for (const a of accounts) {
+		if (!a.Id || linked.has(id15(a.Id)) || byAccount.has(a.Id)) continue;
+		byAccount.set(a.Id, {
+			sfdcAccountId: a.Id, name: a.Name ?? '(no name)', email: a.Primary_Email__c ?? null, phone: a.Phone ?? null,
+			website: a.Website ?? null, contracts: [], contacts: [], stores: [], matches: []
+		});
+	}
 	for (const c of contracts) {
 		if (!c.AccountId || linked.has(id15(c.AccountId))) continue;
 		let cand = byAccount.get(c.AccountId);
@@ -123,43 +135,51 @@ export function attachMatches(
 
 export interface ProvisionList {
 	candidates: ProvisionCandidate[];
-	/** Salesforce accounts with contracts that are already linked to a platform account (not shown). */
+	/** Salesforce accounts (blank vuid) that are already linked to a platform account (not shown). */
 	alreadyLinked: number;
 	truncated: boolean;
 }
 
-const MAX_CONTRACTS = 2000;
+const MAX_ACCOUNTS = 2000;
 
-/** Read-only. Throws if Salesforce cannot be queried (the page shows the error instead of an empty list). */
+/**
+ * Read-only. Throws if Salesforce cannot be queried (the page shows the error instead of an empty list).
+ * Lists every Salesforce Account whose appealsdoctor_vuid__c is blank (not yet on the platform) and that is not
+ * already linked to a platform account — with or without service contracts.
+ */
 export async function listProvisionCandidates(q = ''): Promise<ProvisionList> {
-	const contractsRes = await sfdcQuery<SfContractRow>(
-		`SELECT Id, Name, ContractNumber, StartDate, EndDate, AccountId, Account.Name, Account.Phone, Account.Website, Account.Primary_Email__c
-		 FROM ServiceContract WHERE AccountId != null ORDER BY CreatedDate DESC LIMIT ${MAX_CONTRACTS}`,
+	const accountsRes = await sfdcQuery<SfAccountRow>(
+		`SELECT Id, Name, Phone, Website, Primary_Email__c FROM Account
+		 WHERE ${VUID_FIELD} = null ORDER BY CreatedDate DESC LIMIT ${MAX_ACCOUNTS}`,
 		{ paginate: true }
 	);
-	const contracts = contractsRes.records;
-	const sfAccountIds = [...new Set(contracts.map((c) => c.AccountId))];
+	const accounts = accountsRes.records;
+	const sfAccountIds = accounts.map((a) => a.Id);
 	if (!sfAccountIds.length) return { candidates: [], alreadyLinked: 0, truncated: false };
 
 	const linkedRows = await sql<{ sfdc_account_id: string }[]>`SELECT sfdc_account_id FROM accounts WHERE sfdc_account_id IS NOT NULL`;
 	const linked = new Set(linkedRows.map((r) => id15(r.sfdc_account_id)));
 	const unlinkedIds = sfAccountIds.filter((id) => !linked.has(id15(id)));
 	const alreadyLinked = sfAccountIds.length - unlinkedIds.length;
-	if (!unlinkedIds.length) return { candidates: [], alreadyLinked, truncated: contracts.length >= MAX_CONTRACTS };
+	const truncated = accounts.length >= MAX_ACCOUNTS;
+	if (!unlinkedIds.length) return { candidates: [], alreadyLinked, truncated };
 
+	const contracts: SfContractRow[] = [];
 	const contacts: SfContactRow[] = [];
 	const stores: SfStoreRow[] = [];
 	for (let i = 0; i < unlinkedIds.length; i += 150) {
 		const list = unlinkedIds.slice(i, i + 150).map((id) => `'${id}'`).join(',');
-		const [c, s] = await Promise.all([
+		const [k, c, s] = await Promise.all([
+			sfdcQuery<SfContractRow>(`SELECT Id, Name, ContractNumber, StartDate, EndDate, AccountId FROM ServiceContract WHERE AccountId IN (${list}) ORDER BY CreatedDate DESC`, { paginate: true }),
 			sfdcQuery<SfContactRow>(`SELECT Id, FirstName, LastName, Email, AccountId FROM Contact WHERE AccountId IN (${list}) ORDER BY CreatedDate ASC`, { paginate: true }),
 			sfdcQuery<SfStoreRow>(`SELECT Id, Name, Account__c, Seller_ID__c, Marketplaces__c FROM Store__c WHERE Account__c IN (${list})`, { paginate: true })
 		]);
+		contracts.push(...k.records);
 		contacts.push(...c.records);
 		stores.push(...s.records);
 	}
 
-	let candidates = buildCandidates(contracts, contacts, stores, linked);
+	let candidates = buildCandidates(contracts, contacts, stores, linked, accounts);
 	const needle = q.trim().toLowerCase();
 	if (needle) {
 		candidates = candidates.filter((c) =>
@@ -175,7 +195,7 @@ export async function listProvisionCandidates(q = ''): Promise<ProvisionList> {
 		GROUP BY a.id`;
 	attachMatches(candidates, local.map((l) => ({ ...l, emails: l.emails ?? [] })));
 	candidates.sort((a, b) => a.name.localeCompare(b.name));
-	return { candidates, alreadyLinked, truncated: contracts.length >= MAX_CONTRACTS };
+	return { candidates, alreadyLinked, truncated };
 }
 
 // ─── Provision action ─────────────────────────────────────────────────────

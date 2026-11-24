@@ -145,7 +145,7 @@
 				<span class="chev">›</span>
 			</button>
 		{:else}
-			<button type="button" class="btn btn-primary" on:click={() => (plansOpen = true)}>Subscribe · from $100/year ›</button>
+			<button type="button" class="btn btn-primary" data-mutates on:click={() => (plansOpen = true)}>Subscribe · from $100/year ›</button>
 		{/if}
 	</section>
 

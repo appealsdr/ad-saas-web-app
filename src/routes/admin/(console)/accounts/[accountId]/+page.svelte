@@ -101,6 +101,14 @@
 </div>
 
 <div class="adm-card card">
+	<form method="POST" action="?/set_messages" use:enhance class="msgrow">
+		<label><input type="checkbox" name="enabled" checked={data.messagesEnabled} disabled={!data.canEdit} on:change={(e) => e.currentTarget.form?.requestSubmit()} />
+			<strong>Enable Messages tab</strong></label>
+		<span class="adm-muted">Shows the global Messages page in this customer's sidebar. Account and store message panels always work.</span>
+	</form>
+</div>
+
+<div class="adm-card card">
 	<div class="head">
 		<div>
 			<h2>Setup summary</h2>
@@ -204,6 +212,7 @@
 </form>
 
 <style>
+	.msgrow { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
 	.sfbar { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; border: 1px solid; border-radius: 10px; padding: 10px 16px; font-size: 13px; margin-bottom: 16px; }
 	.idbtn { background: rgba(255,255,255,.7); border: 1px solid currentColor; border-radius: 6px; padding: 0 6px; margin-left: 6px; font-family: ui-monospace, Menlo, monospace; font-size: 11px; color: inherit; cursor: pointer; }
 	.obj { font-size: 12px; } .obj code { background: rgba(255,255,255,.7); padding: 1px 6px; border-radius: 5px; }

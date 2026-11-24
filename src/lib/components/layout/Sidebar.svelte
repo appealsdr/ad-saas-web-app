@@ -7,7 +7,7 @@
 
 	// Services are purchased per-store now (under /stores/<id>/services), so
 	// there's no global Services tab in the sidebar.
-	const navItems = [
+	const allNavItems = [
 		{ href: '/dashboard', icon: '/icons/home.png',    label: 'Dashboard' },
 		{ href: '/accounts',  icon: '/icons/account.png', label: 'Accounts' },
 		{ href: '/stores',    icon: '/icons/store.png',   label: 'Stores' },
@@ -16,6 +16,9 @@
 		{ href: '/payments',  icon: '/icons/payment.png', label: 'Payments' },
 		{ href: '/help',      icon: '/icons/guidance.png', label: 'How to Use' }
 	];
+
+	// Messages is opt-in per account (AD-1968); account/store message panels are unaffected.
+	$: navItems = allNavItems.filter((i) => i.href !== '/messages' || $page.data.messagesEnabled);
 
 	$: currentPath = $page.url.pathname;
 

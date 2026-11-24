@@ -141,6 +141,16 @@ export async function getAccount(accountId: string): Promise<AccountDetail | nul
 	return rows[0] ?? null;
 }
 
+/** Whether the global Messages tab is on for this account. Rollout-safe: false if migration 041 has not run yet. */
+export async function getMessagesEnabled(accountId: string): Promise<boolean> {
+	try {
+		const [r] = await sql<{ messages_enabled: boolean }[]>`SELECT messages_enabled FROM accounts WHERE id = ${accountId}`;
+		return r?.messages_enabled === true;
+	} catch {
+		return false;
+	}
+}
+
 export async function accountSummary(accountId: string) {
 	const [r] = await sql<
 		{ users: number; active_users: number; stores: number; connected_stores: number; contracts: number; owner_email: string | null }[]

@@ -2,8 +2,10 @@ import { fail, redirect } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
 import { workspace } from '$lib/server/admin/workspace';
 import { resyncAction } from '$lib/server/admin/resync_action';
-import { accountSummary } from '$lib/server/admin/accounts';
+import { accountSummary, getMessagesEnabled } from '$lib/server/admin/accounts';
 import { roleHas } from '$lib/server/admin/permissions';
+import { sql } from '$lib/server/db';
+import { recordAudit } from '$lib/server/admin/audit';
 import { auditActor, clientIp } from '$lib/server/admin/guard';
 import { ActionError, deleteAccountCascade, EDITABLE_ACCOUNT_FIELDS, FIELD_OWNERSHIP, SF_FIELD, updateAccountFields, type EditableAccountField } from '$lib/server/admin/actions';
 
@@ -13,6 +15,7 @@ export const load: PageServerLoad = async (event) => {
 		freshMfa: staff.freshMfa,
 		account,
 		summary: await accountSummary(accountId),
+		messagesEnabled: await getMessagesEnabled(accountId),
 		canEdit: roleHas(staff.role, 'accounts.update'),
 		canDelete: roleHas(staff.role, 'accounts.delete'),
 		ownership: FIELD_OWNERSHIP,
@@ -39,6 +42,24 @@ export const actions: Actions = {
 			if (e instanceof ActionError) return fail(e.status, { ok: false as const, error: e.message });
 			throw e;
 		}
+	},
+	/** AD-1968: enable/disable the global Messages tab for this account. */
+	set_messages: async (event) => {
+		const { staff, accountId } = await workspace(event, 'accounts.update');
+		const data = await event.request.formData();
+		const enabled = data.get('enabled') === 'on';
+		try {
+			await sql.begin(async (tx) => {
+				await tx`UPDATE accounts SET messages_enabled = ${enabled} WHERE id = ${accountId}`;
+				await recordAudit(
+					{ actor: auditActor(staff), action: 'account.messages_toggle', targetType: 'account', targetId: accountId, targetAccountId: accountId, outcome: 'success', ip: clientIp(event), metadata: { messages_enabled: enabled } },
+					tx
+				);
+			});
+		} catch {
+			return fail(500, { ok: false as const, error: 'Could not update the Messages setting. Has migration 041 been applied?' });
+		}
+		return { ok: `Messages tab ${enabled ? 'enabled' : 'disabled'} for this account.` };
 	},
 	delete: async (event) => {
 		const { staff, accountId } = await workspace(event, 'accounts.delete', { freshMfa: true });
