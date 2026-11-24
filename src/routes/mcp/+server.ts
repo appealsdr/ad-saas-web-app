@@ -13,7 +13,8 @@ import { clientIp } from '$lib/server/integrations/http';
 import { handleRpc, isRpcRequest, rpcError } from '$lib/server/mcp/protocol';
 import { logError, describeError } from '$lib/server/error_log';
 
-const MAX_BODY = 256 * 1024;
+// Room for a 5 MB file as base64 inside one JSON message (see MCP_MAX_FILE_BYTES).
+const MAX_BODY = 8 * 1024 * 1024;
 const headers = { 'cache-control': 'no-store' };
 
 const allowedOrigins = () => (env.MCP_ALLOWED_ORIGINS ?? '').split(',').map((o) => o.trim()).filter(Boolean);
