@@ -80,7 +80,8 @@ export interface RequireOptions {
  */
 export async function requireIntegrationPermission(
 	request: Request,
-	requiredPermission: IntegrationPermission,
+	/** `null` = authenticate only (no permission check) — used by MCP initialize/tools/list, which filter by permission instead. */
+	requiredPermission: IntegrationPermission | null,
 	opts: RequireOptions = {}
 ): Promise<IntegrationPrincipal> {
 	// 1
@@ -115,7 +116,7 @@ export async function requireIntegrationPermission(
 	const fail = (status: number, code: string, message: string, extra?: Partial<ApiError>) => {
 		const e = new ApiError(status, code, message);
 		e.principal = principal;
-		e.requiredPermission = requiredPermission;
+		e.requiredPermission = requiredPermission ?? undefined;
 		Object.assign(e, extra);
 		return e;
 	};
@@ -145,7 +146,7 @@ export async function requireIntegrationPermission(
 	}
 
 	// 8 — exact permission from THIS integration only.
-	if (!principal.permissions.includes(requiredPermission)) {
+	if (requiredPermission && !principal.permissions.includes(requiredPermission)) {
 		throw fail(403, 'PERMISSION_DENIED', `This integration lacks the "${requiredPermission}" permission.`);
 	}
 
