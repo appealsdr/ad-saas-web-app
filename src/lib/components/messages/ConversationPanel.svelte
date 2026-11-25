@@ -57,6 +57,8 @@
 	export let height = 560;
 	/** Prefix for element ids when several panels share a page. */
 	export let idPrefix = 'conv';
+	/** Reloads the conversation (Refresh / Retry and after sending). Hosts can narrow what is reloaded. */
+	export let onRefresh: () => Promise<unknown> = invalidateAll;
 
 	const dispatch = createEventDispatcher<{ read: { id: string }; thread: { id: string } }>();
 	let input = '';
@@ -229,7 +231,7 @@
 		refreshing = true;
 		announcement = 'Refreshing messages…';
 		try {
-			await invalidateAll();
+			await onRefresh();
 			announcement = 'Messages refreshed.';
 		} finally {
 			refreshing = false;
@@ -439,7 +441,8 @@
 						input = '';
 						replyingTo = null;
 						announcement = 'Message sent.';
-						await update({ reset: false });
+						await onRefresh();
+						await update({ reset: false, invalidateAll: false });
 						scrollToLatest(true);
 						return;
 					}

@@ -15,7 +15,8 @@ export default defineConfig({
 			'$env/dynamic/public': r('./tests/setup/env-shim.ts'),
 			'$app/environment': r('./tests/setup/app-environment-shim.ts'),
 			'$app/forms': r('./tests/setup/app-forms-shim.ts'),
-			'$app/navigation': r('./tests/setup/app-navigation-shim.ts')
+			'$app/navigation': r('./tests/setup/app-navigation-shim.ts'),
+			'$app/stores': r('./tests/setup/app-stores-shim.ts')
 		}
 	},
 	test: {

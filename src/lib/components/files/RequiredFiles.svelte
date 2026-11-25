@@ -11,6 +11,7 @@
 	 */
 	import { enhance, deserialize, applyAction } from '$app/forms';
 	import { invalidateAll } from '$app/navigation';
+	import type { SubmitFunction } from '@sveltejs/kit';
 	import FilePreviewModal from './FilePreviewModal.svelte';
 	import { fileTypeIconUrl } from '$lib/fileIcons';
 
@@ -53,6 +54,14 @@
 	export let contextLabel = 'Documents';
 	/** Max files shown per required file in the list; the rest are behind "+N more" (opens the upload screen). */
 	export let previewLimit: number | null = null;
+	/** Reloads the data after a successful upload or removal. Hosts can narrow what is reloaded. */
+	export let refresh: () => Promise<unknown> = invalidateAll;
+
+	/** Remove-file forms: reload through `refresh`, then apply the action result as usual. */
+	const removeThenRefresh: SubmitFunction = () => async ({ result, update }) => {
+		if (result.type === 'success') await refresh();
+		await update({ invalidateAll: false });
+	};
 
 	const MAX_FILE_BYTES = 25 * 1024 * 1024;
 
@@ -117,6 +126,10 @@
 		phase = 'uploading';
 		progress = 0;
 
+		// The host may switch records while this uploads; the result belongs to this page only.
+		const submittedFrom = typeof location === 'undefined' ? '' : location.pathname;
+		const samePage = () => location.pathname === submittedFrom;
+
 		const xhr = new XMLHttpRequest();
 		xhr.open('POST', uploadAction);
 		xhr.setRequestHeader('x-sveltekit-action', 'true');
@@ -130,7 +143,7 @@
 		};
 		xhr.onerror = xhr.ontimeout = () => {
 			uploading = false;
-			applyAction({ type: 'failure', status: 0, data: { uploadError: 'Network error. Please try again.' } });
+			if (samePage()) applyAction({ type: 'failure', status: 0, data: { uploadError: 'Network error. Please try again.' } });
 		};
 		xhr.onload = async () => {
 			let result;
@@ -139,8 +152,9 @@
 			} catch {
 				result = { type: 'failure' as const, status: xhr.status, data: { uploadError: 'Unexpected response from the server.' } };
 			}
-			if (result.type === 'success') await invalidateAll();
+			if (result.type === 'success') await refresh();
 			uploading = false;
+			if (!samePage() && result.type !== 'redirect') return;
 			await applyAction(result);
 			if (result.type === 'success') closeUpload();
 		};
@@ -274,7 +288,7 @@
 						{multiple ? 'Add files' : 'Re-upload'}
 					</button>
 					{#if !multiple}
-						<form method="POST" action={clearAction} use:enhance style="display:inline">
+						<form method="POST" action={clearAction} use:enhance={removeThenRefresh} style="display:inline">
 							<input type="hidden" name="requiredFileId" value={f.id} />
 							<input type="hidden" name="s3DocumentId" value={f.upload?.s3DocumentId ?? ''} />
 							<button class="rf-x" type="submit" aria-label="Remove upload"
@@ -306,7 +320,7 @@
 									</span>
 								{/if}
 								{#if multiple && u.localDocId}
-									<form method="POST" action={clearAction} use:enhance style="display:inline-flex">
+									<form method="POST" action={clearAction} use:enhance={removeThenRefresh} style="display:inline-flex">
 										<input type="hidden" name="requiredFileId" value={f.id} />
 										<input type="hidden" name="s3DocumentId" value={u.s3DocumentId ?? f.upload?.s3DocumentId ?? ''} />
 										<input type="hidden" name="docId" value={u.localDocId} />
@@ -401,7 +415,7 @@
 								<div class="rf-file-actions">
 									<button type="button" class="rf-outline-btn sm" data-mutates title="Upload a new version of this file"
 										on:click={() => startAdding(u.localDocId)}>New version</button>
-									<form method="POST" action={clearAction} use:enhance style="display:inline">
+									<form method="POST" action={clearAction} use:enhance={removeThenRefresh} style="display:inline">
 										<input type="hidden" name="requiredFileId" value={active.id} />
 										<input type="hidden" name="s3DocumentId" value={u.s3DocumentId ?? active.upload?.s3DocumentId ?? ''} />
 										{#if multiple}<input type="hidden" name="docId" value={u.localDocId ?? ''} />{/if}
