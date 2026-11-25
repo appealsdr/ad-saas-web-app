@@ -66,7 +66,7 @@
 	// ── Status → mockup badge classes ──
 	const CASE_STATUS_BADGE: Record<string, string> = {
 		new: 'badge-orange', open: 'badge-orange',
-		working: 'badge-blue', 'in progress': 'badge-blue',
+		working: 'badge-blue', 'in progress': 'badge-blue', 'in progress - tech': 'badge-blue',
 		'waiting on client': 'badge-red', waiting: 'badge-red', pending: 'badge-red',
 		closed: 'badge-green', resolved: 'badge-green'
 	};
