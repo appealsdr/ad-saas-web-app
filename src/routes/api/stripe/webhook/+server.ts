@@ -25,7 +25,7 @@
  *
  * Configure in the Stripe dashboard: endpoint URL = <origin>/api/stripe/webhook,
  * events = customer.subscription.updated, customer.subscription.deleted,
- * invoice.payment_succeeded. Copy the
+ * invoice.payment_succeeded, payment_intent.succeeded. Copy the
  * signing secret into STRIPE_WEBHOOK_SECRET.
  */
 import { error, text } from '@sveltejs/kit';
@@ -33,7 +33,7 @@ import type { RequestHandler } from './$types';
 import { getStripe } from '$lib/server/stripe';
 import { createPayment } from '$lib/server/salesforce';
 import { handleSubscriptionEnded, handleSubscriptionUpdated } from '$lib/server/subscription_lifecycle';
-import { applyBalancePaid } from '$lib/server/payments/balance';
+import { applyBalancePaid, ensurePaymentStored } from '$lib/server/payments/balance';
 import { sql } from '$lib/server/db';
 import { logError, describeError } from '$lib/server/error_log';
 import { env } from '$env/dynamic/private';
@@ -73,6 +73,18 @@ export const POST: RequestHandler = async ({ request }) => {
 	const isNewEvent = await claimWebhookEvent(event.id, event.type);
 	if (!isNewEvent) return text('ok');
 
+	try {
+		await handleEvent(event);
+	} catch (e) {
+		// Release the claim: otherwise Stripe's retry is treated as a duplicate and the work is lost.
+		await sql`DELETE FROM stripe_webhook_events WHERE stripe_event_id = ${event.id}`.catch(() => {});
+		throw e;
+	}
+
+	return text('ok');
+};
+
+async function handleEvent(event: import('stripe').Stripe.Event): Promise<void> {
 	if (event.type === 'customer.subscription.deleted') {
 		const subscription = event.data.object as import('stripe').Stripe.Subscription;
 		await handleSubscriptionEnded(subscription.id);
@@ -82,18 +94,19 @@ export const POST: RequestHandler = async ({ request }) => {
 		await handleSubscriptionUpdated(event.data.object as import('stripe').Stripe.Subscription);
 	}
 
-	// A deposit balance was paid: update the EXISTING Payment__c (idempotent with the return page).
+	// A deposit balance was paid: update the EXISTING Payment__c (idempotent with the return page), then make
+	// sure the payment and its contract are stored in the app.
 	if (event.type === 'payment_intent.succeeded') {
-		await applyBalancePaid(event.data.object as import('stripe').Stripe.PaymentIntent);
+		const pi = event.data.object as import('stripe').Stripe.PaymentIntent;
+		await applyBalancePaid(pi);
+		await ensurePaymentStored(pi);
 	}
 
 	if (event.type === 'invoice.payment_succeeded') {
 		const invoice = event.data.object as import('stripe').Stripe.Invoice;
 		await handleInvoicePaymentSucceeded(invoice, event.id);
 	}
-
-	return text('ok');
-};
+}
 
 /** Returns true the first time this event id is seen, false on a redelivery. */
 async function claimWebhookEvent(eventId: string, eventType: string): Promise<boolean> {
