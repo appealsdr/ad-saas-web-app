@@ -1,8 +1,15 @@
 /**
  * POST /api/stripe/webhook
  *
- * Handles Stripe events that originate entirely on Stripe's side (Billing
- * Portal cancellation, automatic subscription renewal charges):
+ * Handles Stripe events that must be processed without the customer's browser
+ * (purchases, Billing Portal cancellation, automatic subscription renewal charges):
+ *
+ *  - payment_intent.succeeded / checkout.session.completed /
+ *    checkout.session.async_payment_succeeded — a checkout purchase was paid. Creates
+ *    the local contract and its Salesforce records if /checkout/success has not
+ *    (the customer may never get there). Idempotent with that page — see
+ *    $lib/server/checkout/fulfillment. If nothing could be stored the delivery
+ *    fails, so Stripe sends the event again.
  *
  *  - customer.subscription.updated — the customer cancels from Stripe's hosted
  *    Billing Portal (see /api/checkout/billing-portal) but keeps access until the
@@ -19,13 +26,14 @@
  *  - invoice.payment_succeeded — Stripe auto-charges the customer every
  *    renewal term. The very first invoice for a subscription (billing_reason
  *    'subscription_create') is skipped here because that payment is already
- *    recorded when /checkout/success persists the initial contract; only
+ *    recorded when the initial contract is persisted; only
  *    later renewal invoices (billing_reason 'subscription_cycle') create a
  *    new Payment__c in Salesforce, linked to the existing ServiceContract.
  *
  * Configure in the Stripe dashboard: endpoint URL = <origin>/api/stripe/webhook,
- * events = customer.subscription.updated, customer.subscription.deleted,
- * invoice.payment_succeeded, payment_intent.succeeded. Copy the
+ * events = checkout.session.completed, checkout.session.async_payment_succeeded,
+ * payment_intent.succeeded, customer.subscription.updated,
+ * customer.subscription.deleted, invoice.payment_succeeded. Copy the
  * signing secret into STRIPE_WEBHOOK_SECRET.
  */
 import { error, text } from '@sveltejs/kit';
@@ -34,6 +42,7 @@ import { getStripe } from '$lib/server/stripe';
 import { createPayment } from '$lib/server/salesforce';
 import { handleSubscriptionEnded, handleSubscriptionUpdated } from '$lib/server/subscription_lifecycle';
 import { applyBalancePaid, ensurePaymentStored } from '$lib/server/payments/balance';
+import { fulfillPaymentIntent, persistSubscriptionContract, type FulfillmentResult } from '$lib/server/checkout/fulfillment';
 import { sql } from '$lib/server/db';
 import { logError, describeError } from '$lib/server/error_log';
 import { env } from '$env/dynamic/private';
@@ -94,18 +103,30 @@ async function handleEvent(event: import('stripe').Stripe.Event): Promise<void> 
 		await handleSubscriptionUpdated(event.data.object as import('stripe').Stripe.Subscription);
 	}
 
-	// A deposit balance was paid: update the EXISTING Payment__c (idempotent with the return page), then make
-	// sure the payment and its contract are stored in the app.
 	if (event.type === 'payment_intent.succeeded') {
 		const pi = event.data.object as import('stripe').Stripe.PaymentIntent;
+		// A deposit balance was paid: update the EXISTING Payment__c (idempotent with the return page), then make
+		// sure the payment and its contract are stored in the app. Both ignore every other PaymentIntent.
 		await applyBalancePaid(pi);
 		await ensurePaymentStored(pi);
+		// A checkout purchase was paid (ignores balance and subscription-invoice PaymentIntents).
+		requireStored(await fulfillPaymentIntent(pi));
+	}
+
+	if (event.type === 'checkout.session.completed' || event.type === 'checkout.session.async_payment_succeeded') {
+		const session = event.data.object as import('stripe').Stripe.Checkout.Session;
+		requireStored(await persistSubscriptionContract(session, { paidAt: new Date(event.created * 1000) }));
 	}
 
 	if (event.type === 'invoice.payment_succeeded') {
 		const invoice = event.data.object as import('stripe').Stripe.Invoice;
 		await handleInvoicePaymentSucceeded(invoice, event.id);
 	}
+}
+
+/** Fail the delivery when a purchase could not be stored but may be on a retry. */
+function requireStored(result: FulfillmentResult | null): void {
+	if (result?.retry) throw error(500, 'Purchase not stored yet.');
 }
 
 /** Returns true the first time this event id is seen, false on a redelivery. */
@@ -124,7 +145,7 @@ async function handleInvoicePaymentSucceeded(
 	stripeEventId: string
 ): Promise<void> {
 	// The first invoice on a new subscription is already recorded as a
-	// Payment__c when /checkout/success persists the initial contract
+	// Payment__c when the initial contract is persisted
 	// (see createServiceContractWithLines -> createPayment). Only later
 	// renewal charges need a webhook-driven Payment__c.
 	if (invoice.billing_reason !== 'subscription_cycle') return;

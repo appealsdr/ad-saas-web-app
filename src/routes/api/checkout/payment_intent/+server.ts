@@ -14,8 +14,8 @@
  *   - account_id (Salesforce Account)
  *   - pricebook_entry_ids (comma-joined; Stripe metadata values are strings)
  *
- * NOTE: still no Stripe webhook handler. Until /api/stripe/webhook is built,
- * "payment succeeded" knowledge lives only with Stripe + the success page.
+ * The purchase is persisted by /checkout/success and by /api/stripe/webhook
+ * (payment_intent.succeeded) — see $lib/server/checkout/fulfillment.
  */
 import { json, error } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';

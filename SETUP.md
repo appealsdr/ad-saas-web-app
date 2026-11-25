@@ -51,6 +51,29 @@ Hot-reload is on. SvelteKit will rebuild affected routes automatically.
 
 ---
 
+## Stripe webhook
+
+Each environment needs a webhook endpoint in the Stripe dashboard (Developers → Webhooks):
+URL `<origin>/api/stripe/webhook`, signing secret in `STRIPE_WEBHOOK_SECRET`. Enable these events:
+
+| Event | Used for |
+|---|---|
+| `payment_intent.succeeded` | Stores a one-off purchase if the customer never reached `/checkout/success`; records deposit-balance payments |
+| `checkout.session.completed` | Stores a recurring subscription if the customer never reached `/checkout/success` |
+| `checkout.session.async_payment_succeeded` | The same, for payment methods that settle after checkout (e.g. bank debits) |
+| `customer.subscription.updated` | Cancellation requested or withdrawn |
+| `customer.subscription.deleted` | Subscription ended |
+| `invoice.payment_succeeded` | Subscription renewal payments |
+
+Locally: `stripe listen --forward-to localhost:5173/api/stripe/webhook` and use the secret it prints.
+
+A purchase the webhook cannot store (e.g. the Salesforce price book is unreadable) fails the delivery, and Stripe
+retries it. Once the contract exists in the app, a failed Salesforce write is **not** retried: the contract shows
+`sync_status = 'failed'` (or stays `pending` if the server stopped mid-write) and is fixed from the admin console.
+Check Salesforce for an existing record before using "Create in Salesforce" on a `pending` one.
+
+---
+
 ## 5. Build for production (Node adapter)
 
 ```bash
