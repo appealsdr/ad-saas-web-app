@@ -14,6 +14,7 @@ import { sql } from '../db';
 import { sfdcQuery } from '../salesforce/client';
 import { createPayment } from '../salesforce';
 import { getStripe } from '../stripe';
+import { soqlList, soqlString } from '../salesforce/soql';
 import { logError, describeError } from '../error_log';
 import { applyBalancePaid, getOwnedPayment } from '../payments/balance';
 import { copySalesforceContract, markSalesforceStatus, savePayment, type PaymentKind } from '../payments/records';
@@ -128,10 +129,9 @@ async function whatWeKnow(f: Found): Promise<Known> {
 	let sfError: string | null = null;
 	try {
 		const balanceId = kind === 'balance' ? f.pi.metadata.payment_id : null;
-		// `keys` come from Stripe and match STRIPE_ID, so they are safe inside the query.
 		const where = balanceId && SF_ID.test(balanceId)
-			? `Id = '${balanceId}'`
-			: `Stripe_Payment_Intent_Id__c IN (${keys.filter((k) => /^[A-Za-z0-9_:]+$/.test(k)).map((k) => `'${k}'`).join(',')})`;
+			? `Id = ${soqlString(balanceId)}`
+			: `Stripe_Payment_Intent_Id__c IN (${soqlList(keys)})`;
 		sfPayment = (await sfdcQuery<SfPay>(`SELECT ${SF_PAY_FIELDS} FROM Payment__c WHERE ${where} ORDER BY CreatedDate ASC LIMIT 1`)).records[0] ?? null;
 	} catch (e) {
 		sfError = describeError(e).errorMessage;
@@ -169,7 +169,7 @@ async function ownership(accountId: string, f: Found, k: Known): Promise<{ state
 		add('Stripe customer', a?.id);
 	}
 	if (k.sfContractId && !k.sfError) {
-		const sc = (await sfdcQuery<{ AccountId: string | null }>(`SELECT AccountId FROM ServiceContract WHERE Id = '${k.sfContractId}' LIMIT 1`)).records[0];
+		const sc = (await sfdcQuery<{ AccountId: string | null }>(`SELECT AccountId FROM ServiceContract WHERE Id = ${soqlString(k.sfContractId)} LIMIT 1`)).records[0];
 		if (sc?.AccountId && SF_ID.test(sc.AccountId)) {
 			const [a] = await sql<{ id: string }[]>`
 				SELECT id FROM accounts WHERE left(sfdc_account_id, 15) = ${sc.AccountId.slice(0, 15)}
@@ -437,7 +437,7 @@ async function pushRenewal(
 	// One push at a time per transaction, so two clicks cannot create two records.
 	return sql.begin(async (tx) => {
 		await tx`SELECT pg_advisory_xact_lock(hashtext(${paymentIntentId}))`;
-		let sfId = (await sfdcQuery<{ Id: string }>(`SELECT Id FROM Payment__c WHERE Stripe_Payment_Intent_Id__c = '${paymentIntentId}' LIMIT 1`)).records[0]?.Id;
+		let sfId = (await sfdcQuery<{ Id: string }>(`SELECT Id FROM Payment__c WHERE Stripe_Payment_Intent_Id__c = ${soqlString(paymentIntentId)} LIMIT 1`)).records[0]?.Id;
 		const existed = !!sfId;
 		if (!sfId) {
 			const created = await createPayment(

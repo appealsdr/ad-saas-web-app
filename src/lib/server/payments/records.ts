@@ -13,6 +13,7 @@ import type Stripe from 'stripe';
 import { sql } from '../db';
 import { sfdcQuery } from '../salesforce/client';
 import { getStripe } from '../stripe';
+import { soqlString } from '../salesforce/soql';
 
 const SF_ID = /^[a-zA-Z0-9]{15,18}$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -132,7 +133,7 @@ export async function storePaidContract(pi: Stripe.PaymentIntent, opts: { refres
 
 	const [payment] = (
 		await sfdcQuery<{ Service_Contract__c: string | null }>(
-			`SELECT Service_Contract__c FROM Payment__c WHERE Id = '${paymentId}' LIMIT 1`
+			`SELECT Service_Contract__c FROM Payment__c WHERE Id = ${soqlString(paymentId)} LIMIT 1`
 		)
 	).records;
 	const sfContractId = payment?.Service_Contract__c;
@@ -161,7 +162,7 @@ type SfRecord = Record<string, unknown> & { Id: string };
 const text = (v: unknown): string | null => (typeof v === 'string' && v !== '' ? v : null);
 const num = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null);
 
-/** Every field of every matching record. `from` is built from validated ids only. */
+/** Every field of every matching record. Values inside `from` go through soqlString(). */
 async function allRecords(from: string): Promise<SfRecord[]> {
 	const out: SfRecord[] = [];
 	for (let offset = 0; offset <= MAX_OFFSET; offset += PAGE) {
@@ -185,15 +186,15 @@ export async function copySalesforceContract(accountId: string, sfContractId: st
 	if (!account?.sfdc_account_id) return null;
 
 	const readAt = new Date();
-	const [contract] = await allRecords(`ServiceContract WHERE Id = '${sfContractId}'`);
+	const [contract] = await allRecords(`ServiceContract WHERE Id = ${soqlString(sfContractId)}`);
 	const owner = text(contract?.AccountId);
 	if (!contract || !owner || !sameSfId(owner, account.sfdc_account_id)) return null;
 
-	const lines = await allRecords(`ContractLineItem WHERE ServiceContractId = '${sfContractId}'`);
-	const payments = await allRecords(`Payment__c WHERE Service_Contract__c = '${sfContractId}'`);
+	const lines = await allRecords(`ContractLineItem WHERE ServiceContractId = ${soqlString(sfContractId)}`);
+	const payments = await allRecords(`Payment__c WHERE Service_Contract__c = ${soqlString(sfContractId)}`);
 	// Product names live on a related object, which FIELDS(ALL) does not include.
 	const products = await sfdcQuery<{ Id: string; PricebookEntry?: { Product2?: { Name?: string | null } | null } | null }>(
-		`SELECT Id, PricebookEntry.Product2.Name FROM ContractLineItem WHERE ServiceContractId = '${sfContractId}'`,
+		`SELECT Id, PricebookEntry.Product2.Name FROM ContractLineItem WHERE ServiceContractId = ${soqlString(sfContractId)}`,
 		{ paginate: true }
 	);
 	const productNames = new Map(products.records.map((p) => [p.Id, p.PricebookEntry?.Product2?.Name ?? null]));
