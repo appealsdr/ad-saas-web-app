@@ -22,8 +22,8 @@ import { ensureOwnerAccountContact } from '../account/contacts';
 import { logError, describeError } from '../error_log';
 import { recordAudit, type AuditActor } from './audit';
 import { ActionError, requireReason } from './actions';
+import { isSalesforceId, soqlList, soqlString } from '../salesforce/soql';
 
-const SF_ID_RE = /^[a-zA-Z0-9]{15}([a-zA-Z0-9]{3})?$/;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const id15 = (id: string) => id.slice(0, 15);
 
@@ -168,7 +168,7 @@ export async function listProvisionCandidates(q = ''): Promise<ProvisionList> {
 	const contacts: SfContactRow[] = [];
 	const stores: SfStoreRow[] = [];
 	for (let i = 0; i < unlinkedIds.length; i += 150) {
-		const list = unlinkedIds.slice(i, i + 150).map((id) => `'${id}'`).join(',');
+		const list = soqlList(unlinkedIds.slice(i, i + 150));
 		const [k, c, s] = await Promise.all([
 			sfdcQuery<SfContractRow>(`SELECT Id, Name, ContractNumber, StartDate, EndDate, AccountId FROM ServiceContract WHERE AccountId IN (${list}) ORDER BY CreatedDate DESC`, { paginate: true }),
 			sfdcQuery<SfContactRow>(`SELECT Id, FirstName, LastName, Email, AccountId FROM Contact WHERE AccountId IN (${list}) ORDER BY CreatedDate ASC`, { paginate: true }),
@@ -221,15 +221,15 @@ export interface ProvisionResult {
 export async function provisionFromSalesforce(ctx: Ctx, input: ProvisionInput): Promise<ProvisionResult> {
 	const why = requireReason(input.reason);
 	const sfId = input.sfdcAccountId.trim();
-	if (!SF_ID_RE.test(sfId)) throw new ActionError('Invalid Salesforce account id.', 422);
-	if (input.sfdcContactId && !SF_ID_RE.test(input.sfdcContactId)) throw new ActionError('Invalid Salesforce contact id.', 422);
+	if (!isSalesforceId(sfId)) throw new ActionError('Invalid Salesforce account id.', 422);
+	if (input.sfdcContactId && !isSalesforceId(input.sfdcContactId)) throw new ActionError('Invalid Salesforce contact id.', 422);
 
 	// Live truth from Salesforce — never trust ids/fields posted by the browser.
 	const accRes = await fetchSalesforceAccount(sfId);
 	if (!accRes.ok) throw new ActionError(`Could not read the Salesforce account: ${accRes.error}`, 502);
 	const sfAcc = accRes.record;
 	const sfStores = await sfdcQuery<SfStoreRow & { Business_Name__c: string | null; Seller_Account_Primary_Email__c: string | null; Store_Email__c: string | null; Country__c: string | null; Description__c: string | null }>(
-		`SELECT Id, Name, Account__c, Seller_ID__c, Marketplaces__c, Business_Name__c, Seller_Account_Primary_Email__c, Store_Email__c, Country__c, Description__c FROM Store__c WHERE Account__c = '${sfId}'`
+		`SELECT Id, Name, Account__c, Seller_ID__c, Marketplaces__c, Business_Name__c, Seller_Account_Primary_Email__c, Store_Email__c, Country__c, Description__c FROM Store__c WHERE Account__c = ${soqlString(sfId)}`
 	);
 	const wanted = new Set(input.storeIds);
 	const chosenStores = sfStores.records.filter((s) => wanted.has(s.Id));

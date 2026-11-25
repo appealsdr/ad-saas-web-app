@@ -18,6 +18,7 @@ import { sobjectUpdate } from '../salesforce/client';
 import { getStripe } from '../stripe';
 import { logError } from '../error_log';
 import { normalizeMethod, type FeeBreakdown } from '../../payments/fees';
+import { isSalesforceId, soqlString } from '../salesforce/soql';
 
 export const STATUS_REQUEST = 'Request Payment';
 export const STATUS_INACTIVE = 'Not Active';
@@ -29,15 +30,14 @@ export interface SfBalancePayment {
 }
 export interface OwnedPayment { payment: SfBalancePayment; contractId: string; currency: string; accountId: string }
 
-const SF_ID = /^[a-zA-Z0-9]{15,18}$/;
-export const isSfId = (v: string) => SF_ID.test(v);
+export { isSalesforceId as isSfId };
 
 /** A Payment__c, but only if it belongs to a contract of THIS account (tenancy). */
 export async function getOwnedPayment(accountId: string, sfPaymentId: string): Promise<OwnedPayment | null> {
-	if (!isSfId(sfPaymentId)) return null;
+	if (!isSalesforceId(sfPaymentId)) return null;
 	const res = await sfdcQuery<SfBalancePayment>(
 		`SELECT Id, Name, Amount__c, Status__c, Payment_Type__c, Description__c, Service_Contract__c, Contract_Line_Item__c, Stripe_Payment_Intent_Id__c
-		 FROM Payment__c WHERE Id = '${sfPaymentId}' LIMIT 1`
+		 FROM Payment__c WHERE Id = ${soqlString(sfPaymentId)} LIMIT 1`
 	);
 	const p = res.records[0];
 	if (!p?.Service_Contract__c) return null;
@@ -47,9 +47,9 @@ export async function getOwnedPayment(accountId: string, sfPaymentId: string): P
 	// Contract that lives only in Salesforce (linked through a sign-up link): it belongs to this account
 	// when its ServiceContract.AccountId is the account's linked Salesforce Account.
 	const [acct] = await sql<{ sfdc_account_id: string | null }[]>`SELECT sfdc_account_id FROM accounts WHERE id = ${accountId}`;
-	if (!acct?.sfdc_account_id || !isSfId(acct.sfdc_account_id)) return null;
+	if (!acct?.sfdc_account_id || !isSalesforceId(acct.sfdc_account_id)) return null;
 	const sc = await sfdcQuery<{ Id: string }>(
-		`SELECT Id FROM ServiceContract WHERE Id = '${p.Service_Contract__c}' AND AccountId = '${acct.sfdc_account_id}' LIMIT 1`
+		`SELECT Id FROM ServiceContract WHERE Id = ${soqlString(p.Service_Contract__c)} AND AccountId = ${soqlString(acct.sfdc_account_id)} LIMIT 1`
 	);
 	return sc.records[0] ? { payment: p, contractId: p.Service_Contract__c, currency: 'usd', accountId } : null;
 }
@@ -111,7 +111,7 @@ export async function applyBalancePaid(pi: Stripe.PaymentIntent): Promise<'appli
 	if (pi.metadata?.kind !== 'balance' || !pi.metadata.payment_id) return 'ignored';
 	if (pi.status !== 'succeeded') return 'ignored';
 	const paymentId = pi.metadata.payment_id;
-	if (!isSfId(paymentId)) return 'ignored';
+	if (!isSalesforceId(paymentId)) return 'ignored';
 
 	const claimed = await sql<{ stripe_payment_intent_id: string }[]>`
 		INSERT INTO balance_payment_applications (stripe_payment_intent_id, sfdc_payment_id) VALUES (${pi.id}, ${paymentId})
@@ -120,7 +120,7 @@ export async function applyBalancePaid(pi: Stripe.PaymentIntent): Promise<'appli
 
 	try {
 		const res = await sfdcQuery<SfBalancePayment>(
-			`SELECT Id, Name, Amount__c, Status__c, Payment_Type__c, Description__c, Service_Contract__c, Contract_Line_Item__c, Stripe_Payment_Intent_Id__c FROM Payment__c WHERE Id = '${paymentId}' LIMIT 1`
+			`SELECT Id, Name, Amount__c, Status__c, Payment_Type__c, Description__c, Service_Contract__c, Contract_Line_Item__c, Stripe_Payment_Intent_Id__c FROM Payment__c WHERE Id = ${soqlString(paymentId)} LIMIT 1`
 		);
 		const rec = res.records[0];
 		if (!rec) throw new Error('Payment__c not found.');

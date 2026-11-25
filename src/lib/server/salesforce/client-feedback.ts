@@ -8,6 +8,7 @@
  */
 import { sfdcQuery, sobjectCreate, sobjectUpdate, SalesforceApiError } from './client';
 import { logError } from '../error_log';
+import { isSalesforceId, soqlString } from './soql';
 
 const FEEDBACK_OBJECT = 'Client_Feedback__c';
 const FEEDBACK_FIELDS = {
@@ -53,12 +54,12 @@ export async function listClientFeedback(
 	accountId: string,
 	context: { userId?: string; accountId?: string } = {}
 ): Promise<{ ok: true; feedback: ClientFeedback[] } | { ok: false; error: string }> {
-	const escaped = accountId.replace(/'/g, "''");
+	if (!isSalesforceId(accountId)) return { ok: true, feedback: [] };
 	const soql = `
 		SELECT Id, ${FEEDBACK_FIELDS.client}, ${FEEDBACK_FIELDS.body}, ${FEEDBACK_FIELDS.status},
 		       CreatedDate, CreatedBy.Name, LastModifiedDate
 		FROM ${FEEDBACK_OBJECT}
-		WHERE ${FEEDBACK_FIELDS.client} = '${escaped}'
+		WHERE ${FEEDBACK_FIELDS.client} = ${soqlString(accountId)}
 		ORDER BY CreatedDate DESC
 		LIMIT 500
 	`.trim();
@@ -85,12 +86,12 @@ export async function fetchClientFeedback(
 	feedbackId: string,
 	context: { userId?: string; accountId?: string } = {}
 ): Promise<{ ok: true; feedback: ClientFeedback } | { ok: false; error: string; notFound?: boolean }> {
-	const escaped = feedbackId.replace(/'/g, "''");
+	if (!isSalesforceId(feedbackId)) return { ok: false, error: 'Feedback not found.', notFound: true };
 	const soql = `
 		SELECT Id, ${FEEDBACK_FIELDS.client}, ${FEEDBACK_FIELDS.body}, ${FEEDBACK_FIELDS.status},
 		       CreatedDate, CreatedBy.Name, LastModifiedDate
 		FROM ${FEEDBACK_OBJECT}
-		WHERE Id = '${escaped}'
+		WHERE Id = ${soqlString(feedbackId)}
 		LIMIT 1
 	`.trim();
 	try {

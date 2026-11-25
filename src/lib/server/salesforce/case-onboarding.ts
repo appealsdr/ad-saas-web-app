@@ -12,6 +12,7 @@
 import { sfdcQuery, sfdcFetch, sobjectUpdate, SalesforceApiError } from './client';
 import { getSalesforceConfig } from './config';
 import { logError } from '../error_log';
+import { isSalesforceId, soqlList, soqlString } from './soql';
 
 const CONFIG_FIELD = 'Case_Onboarding__c';
 const PROVIDED_FIELD = 'Onboarding_Info_Provided__c';
@@ -115,11 +116,11 @@ export async function fetchCaseOnboarding(
 	caseId: string,
 	context: { userId?: string; accountId?: string } = {}
 ): Promise<CaseOnboarding | null> {
+	if (!isSalesforceId(caseId)) return null;
 	try {
-		const escaped = caseId.replace(/'/g, "''");
 		const head = (
 			await sfdcQuery<Record<string, unknown>>(
-				`SELECT ${CONFIG_FIELD}, ${PROVIDED_FIELD} FROM Case WHERE Id = '${escaped}' LIMIT 1`
+				`SELECT ${CONFIG_FIELD}, ${PROVIDED_FIELD} FROM Case WHERE Id = ${soqlString(caseId)} LIMIT 1`
 			)
 		).records[0];
 		const entries = parseOnboardingConfig(head?.[CONFIG_FIELD]);
@@ -130,7 +131,7 @@ export async function fetchCaseOnboarding(
 		const values = known.length
 			? ((
 					await sfdcQuery<Record<string, unknown>>(
-						`SELECT ${known.map((e) => e.apiName).join(', ')} FROM Case WHERE Id = '${escaped}' LIMIT 1`
+						`SELECT ${known.map((e) => e.apiName).join(', ')} FROM Case WHERE Id = ${soqlString(caseId)} LIMIT 1`
 					)
 				).records[0] ?? {})
 			: {};
@@ -254,8 +255,9 @@ export async function listOnboardingStatusForCases(
 	caseIds: string[]
 ): Promise<Map<string, { provided: boolean }>> {
 	const out = new Map<string, { provided: boolean }>();
-	if (caseIds.length === 0) return out;
-	const literals = caseIds.map((id) => `'${id.replace(/'/g, "''")}'`).join(',');
+	const ids = caseIds.filter(isSalesforceId);
+	if (ids.length === 0) return out;
+	const literals = soqlList(ids);
 	try {
 		const r = await sfdcQuery<Record<string, unknown>>(
 			`SELECT Id, ${CONFIG_FIELD}, ${PROVIDED_FIELD} FROM Case WHERE Id IN (${literals})`,

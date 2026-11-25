@@ -21,6 +21,7 @@ import { sobjectCreate, sobjectUpdate, sobjectGet, sfdcFetch, sfdcQuery, Salesfo
 import { getSalesforceConfig } from './config';
 import { logError } from '../error_log';
 import { isVuidBlank, VUID_FIELD } from './vuid';
+import { soqlString } from './soql';
 
 export interface StoreFields {
 	name: string;
@@ -118,9 +119,8 @@ async function getStoreRecordTypeId(developerName: string): Promise<string | nul
 		return cachedStoreRecordTypeIds.get(developerName)!;
 	}
 	try {
-		const escaped = developerName.replace(/'/g, "''");
 		const r = await sfdcQuery<{ Id: string }>(
-			`SELECT Id FROM RecordType WHERE SObjectType = 'Store__c' AND DeveloperName = '${escaped}' LIMIT 1`
+			`SELECT Id FROM RecordType WHERE SObjectType = 'Store__c' AND DeveloperName = ${soqlString(developerName)} LIMIT 1`
 		);
 		const id = r.records[0]?.Id ?? null;
 		cachedStoreRecordTypeIds.set(developerName, id);

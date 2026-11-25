@@ -39,7 +39,7 @@ import { deleteAccountCascade } from '../../src/lib/server/admin/actions';
 
 const ID = '11111111-1111-4111-8111-111111111111';
 const ctx = { actor: { userId: null, ref: 'staff@x.com', role: 'platform_admin' } };
-const acct = (over: Record<string, unknown> = {}) => ({ id: ID, name: 'Acme', sfdc_account_id: '001ACCOUNT000001', ...over });
+const acct = (over: Record<string, unknown> = {}) => ({ id: ID, name: 'Acme', sfdc_account_id: '001ACCOUNT00001', ...over });
 
 beforeEach(() => {
 	m.order.length = 0;
@@ -57,7 +57,7 @@ describe('account delete clears Salesforce vuid', () => {
 		const calls = m.sfUpdate.mock.calls.map((c) => [c[0], c[1], c[2]]);
 		const body = { appealsdoctor_vuid__c: null };
 		expect(calls).toEqual(expect.arrayContaining([
-			['Account', '001ACCOUNT000001', body],
+			['Account', '001ACCOUNT00001', body],
 			['Contact', 'CONTACT00000001', body],
 			['Contact', 'CONTACT00000002', body],
 			['Contact', 'CONTACT00000003', body], // found in Salesforce only

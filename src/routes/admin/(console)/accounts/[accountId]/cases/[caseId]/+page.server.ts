@@ -4,11 +4,12 @@ import { workspace } from '$lib/server/admin/workspace';
 import { sql } from '$lib/server/db';
 import { fetchCase, listCasesForStores } from '$lib/server/salesforce';
 import { salesforceUrl } from '$lib/server/admin/links';
+import { isSalesforceId } from '$lib/server/salesforce/soql';
 
 export const load: PageServerLoad = async (event) => {
 	const { accountId } = await workspace(event, 'accounts.read');
 	const id = event.params.caseId;
-	if (!/^[a-zA-Z0-9]{15,18}$/.test(id)) throw error(404, 'Case not found.');
+	if (!isSalesforceId(id)) throw error(404, 'Case not found.');
 	const stores = await sql<{ id: string; name: string; sfdc_store_id: string | null }[]>`
 		SELECT id, name, sfdc_store_id FROM stores WHERE account_id = ${accountId} AND sfdc_store_id IS NOT NULL`;
 	// Tenancy: the case must belong to one of THIS account's stores.

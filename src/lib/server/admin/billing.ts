@@ -12,6 +12,7 @@
 import { sql } from '../db';
 import { sfdcQuery } from '../salesforce/client';
 import { logError } from '../error_log';
+import { isSalesforceId, soqlList, soqlString } from '../salesforce/soql';
 
 export type PayStatus = 'paid' | 'due' | 'failed' | 'closed' | 'inactive' | 'ready';
 
@@ -66,18 +67,18 @@ interface SfLine { ServiceContractId: string; Quantity: number | null; UnitPrice
 
 /** ServiceContracts of the account's Salesforce Account (with line items), or [] when unlinked. Throws on a Salesforce error. */
 export async function fetchSalesforceContracts(sfdcAccountId: string | null): Promise<{ contracts: SfContract[]; lines: SfLine[] }> {
-	if (!sfdcAccountId || !/^[a-zA-Z0-9]{15,18}$/.test(sfdcAccountId)) return { contracts: [], lines: [] };
+	if (!sfdcAccountId || !isSalesforceId(sfdcAccountId)) return { contracts: [], lines: [] };
 	let contracts: SfContract[];
 	try {
-		contracts = (await sfdcQuery<SfContract>(`SELECT Id, Name, ContractNumber, Status, StartDate, EndDate, CreatedDate, Store__c, Store__r.Name FROM ServiceContract WHERE AccountId = '${sfdcAccountId}' ORDER BY CreatedDate DESC LIMIT 500`, { paginate: true })).records;
+		contracts = (await sfdcQuery<SfContract>(`SELECT Id, Name, ContractNumber, Status, StartDate, EndDate, CreatedDate, Store__c, Store__r.Name FROM ServiceContract WHERE AccountId = ${soqlString(sfdcAccountId)} ORDER BY CreatedDate DESC LIMIT 500`, { paginate: true })).records;
 	} catch {
 		// Store__c not deployed in this org → read without the store link.
-		contracts = (await sfdcQuery<SfContract>(`SELECT Id, Name, ContractNumber, Status, StartDate, EndDate, CreatedDate FROM ServiceContract WHERE AccountId = '${sfdcAccountId}' ORDER BY CreatedDate DESC LIMIT 500`, { paginate: true })).records;
+		contracts = (await sfdcQuery<SfContract>(`SELECT Id, Name, ContractNumber, Status, StartDate, EndDate, CreatedDate FROM ServiceContract WHERE AccountId = ${soqlString(sfdcAccountId)} ORDER BY CreatedDate DESC LIMIT 500`, { paginate: true })).records;
 	}
 	if (!contracts.length) return { contracts, lines: [] };
 	const lines: SfLine[] = [];
 	for (let i = 0; i < contracts.length; i += 150) {
-		const list = contracts.slice(i, i + 150).map((c) => `'${c.Id}'`).join(',');
+		const list = soqlList(contracts.slice(i, i + 150).map((c) => c.Id));
 		lines.push(...(await sfdcQuery<SfLine>(`SELECT ServiceContractId, Quantity, UnitPrice, Description, PricebookEntry.Product2.Name FROM ContractLineItem WHERE ServiceContractId IN (${list}) ORDER BY CreatedDate ASC`, { paginate: true })).records);
 	}
 	return { contracts, lines };
@@ -127,7 +128,7 @@ export async function accountContracts(accountId: string, opts: { storeId?: stri
 	let sf: SfPayment[] = [];
 	try {
 		for (let i = 0; i < sfIds.length; i += 150) {
-			const list = sfIds.slice(i, i + 150).map((x) => `'${x.replace(/'/g, '')}'`).join(',');
+			const list = soqlList(sfIds.slice(i, i + 150));
 			const r = await sfdcQuery<SfPayment>(`SELECT ${PAYMENT_FIELDS} FROM Payment__c WHERE Service_Contract__c IN (${list}) ORDER BY CreatedDate ASC`, { paginate: true });
 			sf.push(...r.records);
 		}

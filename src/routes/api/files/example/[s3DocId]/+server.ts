@@ -11,6 +11,7 @@ import { error, redirect } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { sfdcQuery } from '$lib/server/salesforce';
 import { getDownloadUrl } from '$lib/server/storage/s3';
+import { isSalesforceId, soqlString } from '$lib/server/salesforce/soql';
 
 interface DocRow {
 	S3_Key__c: string | null;
@@ -22,12 +23,13 @@ export const GET: RequestHandler = async ({ params, locals, url }) => {
 	if (!locals.user) throw error(401, 'Sign in required.');
 
 	const inline = url.searchParams.get('disposition') === 'inline';
-	const id = params.s3DocId.replace(/'/g, "''");
+	const id = params.s3DocId;
+	if (!isSalesforceId(id)) throw error(404, 'Example file not found.');
 
 	let row: DocRow | undefined;
 	try {
 		const result = await sfdcQuery<DocRow>(
-			`SELECT S3_Key__c, File_Name__c, Content_Type__c FROM S3_Document__c WHERE Id = '${id}' LIMIT 1`
+			`SELECT S3_Key__c, File_Name__c, Content_Type__c FROM S3_Document__c WHERE Id = ${soqlString(id)} LIMIT 1`
 		);
 		row = result.records[0];
 	} catch (e) {

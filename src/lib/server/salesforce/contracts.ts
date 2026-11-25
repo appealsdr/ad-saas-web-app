@@ -29,6 +29,7 @@ import { logError } from '../error_log';
 import { VUID_FIELD } from './vuid';
 import { createServiceCase } from './service-cases';
 import { createPayment } from './payments';
+import { isSalesforceId, soqlList, soqlString } from './soql';
 
 // ── SF API names — tweak if your org uses different ones ──
 /** ContractLineItem.Deposit__c — deposit for the whole line (pricebook default, overridable in Salesforce). */
@@ -37,11 +38,11 @@ const LINE_DEPOSIT_FIELD = 'Deposit__c';
 /** Deposit__c per ContractLineItem Id as currently stored in Salesforce (blank / unreadable → absent). */
 async function readLineDeposits(lineItemIds: string[]): Promise<Map<string, number>> {
 	const out = new Map<string, number>();
-	const ids = lineItemIds.filter((id) => /^[a-zA-Z0-9]{15,18}$/.test(id));
+	const ids = lineItemIds.filter(isSalesforceId);
 	if (!ids.length) return out;
 	try {
 		const res = await sfdcQuery<Record<string, unknown> & { Id: string }>(
-			`SELECT Id, ${LINE_DEPOSIT_FIELD} FROM ContractLineItem WHERE Id IN (${ids.map((i) => `'${i}'`).join(',')})`,
+			`SELECT Id, ${LINE_DEPOSIT_FIELD} FROM ContractLineItem WHERE Id IN (${soqlList(ids)})`,
 			{ paginate: true }
 		);
 		for (const r of res.records) {
@@ -340,7 +341,7 @@ export async function populateContract(
 	let existingPays: SfPaymentRow[] = [];
 	try {
 		existingPays = (await sfdcQuery<SfPaymentRow>(
-			`SELECT Id, Contract_Line_Item__c, Payment_Type__c, Status__c, Stripe_Payment_Intent_Id__c, Order_Ref__c FROM Payment__c WHERE Service_Contract__c = '${sfdcServiceContractId}'`,
+			`SELECT Id, Contract_Line_Item__c, Payment_Type__c, Status__c, Stripe_Payment_Intent_Id__c, Order_Ref__c FROM Payment__c WHERE Service_Contract__c = ${soqlString(sfdcServiceContractId)}`,
 			{ paginate: true }
 		)).records;
 	} catch {
