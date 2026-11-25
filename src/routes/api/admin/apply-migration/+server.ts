@@ -34,7 +34,11 @@ const MIGRATION_ALLOWLIST = [
 	'027_subscription_cancel_requested.sql',
 	'028_line_item_balance_due.sql',
 	'029_balance_payment_applications.sql',
-	'030_standalone_admin_accounts.sql'
+	'030_standalone_admin_accounts.sql',
+	// Apply in this order. Re-running 044 after 045 fails without changing anything (it cannot narrow the view).
+	'044_stripe_payment_records.sql',
+	'045_stripe_payment_import.sql',
+	'046_files_download_permission.sql'
 ];
 
 function safeEqual(a: string, b: string): boolean {
