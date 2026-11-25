@@ -14,6 +14,8 @@
 	let search = '';
 	let open = new Set<string>();
 	let modal: { kind: 'create' | 'sync' | 'repair' | 'delete'; c: C } | null = null;
+	/** Salesforce → app: one contract, or 'all'. */
+	let copying: C | 'all' | null = null;
 
 	const attention = (c: C) => c.payments.some((p) => p.status === 'failed') || c.syncStatus === 'failed';
 	const matches = (c: C, f: string) =>
@@ -32,8 +34,10 @@
 	const SF = { synced: ['Synced', '#DCFCE7', '#15803d'], not_in_sf: ['Not in Salesforce', '#FEE2E2', '#b91c1c'], unknown: ['Unknown', '#FEF3C7', '#92400e'] } as const;
 	function toggle(id: string) { open.has(id) ? open.delete(id) : open.add(id); open = open; }
 	function menu(c: C) {
-		if (c.source === 'salesforce') return [{ label: 'View in Salesforce', icon: '↗', href: c.sfUrl ?? undefined, disabled: !c.sfUrl, title: c.sfUrl ? undefined : 'No linked Salesforce record' }];
+		const copy = { label: 'Copy from Salesforce', icon: '⬇', disabled: !data.canSync || !c.sfdcId || c.sfState === 'not_in_sf', title: c.sfdcId ? 'Save the contract, its line items and payments in the app' : 'Not linked to Salesforce', run: () => (copying = c) };
+		if (c.source === 'salesforce') return [copy, { label: 'View in Salesforce', icon: '↗', href: c.sfUrl ?? undefined, disabled: !c.sfUrl, title: c.sfUrl ? undefined : 'No linked Salesforce record' }];
 		return [
+			copy,
 			{ label: 'View', icon: '👁', href: `${base}/records/contract/${c.id}` },
 			{ label: 'Edit', icon: '✏️', href: `${base}/records/contract/${c.id}?edit=1` },
 			{ label: 'Create in Salesforce', icon: '＋', disabled: !data.canSync || c.sfState !== 'not_in_sf', title: c.sfState === 'synced' ? 'Already in Salesforce — use Sync to update it' : c.sfState === 'unknown' ? 'Salesforce could not be reached' : undefined, run: () => (modal = { kind: 'create', c }) },
@@ -55,6 +59,7 @@
 	<div class="toolbar">
 		<input type="search" class="adm-input search" placeholder="Search contracts by number, store, service, Salesforce ID or Stripe reference…" aria-label="Search contracts" bind:value={search} />
 		{#if search}<button type="button" class="adm-btn outline sm" on:click={() => (search = '')}>Clear</button>{/if}
+		{#if data.canSync}<button type="button" class="adm-btn sm" title="Save every Salesforce contract and its payments in the app" on:click={() => (copying = 'all')}>Copy all from Salesforce</button>{/if}
 	</div>
 	<div class="pillbar">
 		{#each FILTERS as [k, label]}<button type="button" class="pill" class:active={filter === k} on:click={() => (filter = k)}>{label} <span>{count(k)}</span></button>{/each}
@@ -80,7 +85,7 @@
 						<td><strong>{money(c.amount)}</strong></td>
 						<td>{c.lines.length}</td>
 						<td>{paid} of {tops} paid</td>
-						<td><span class="chip" style="background:{sf[1]};color:{sf[2]}">{sf[0]}</span>{#if c.sfdcId}<div class="adm-mono adm-muted">{c.sfdcId}</div>{/if}</td>
+						<td><span class="chip" style="background:{sf[1]};color:{sf[2]}">{sf[0]}</span>{#if c.sfdcId}<div class="adm-mono adm-muted">{c.sfdcId}</div>{/if}{#if c.copiedAt}<div class="adm-muted">Copied {fmtD(c.copiedAt)}</div>{/if}</td>
 						<td><RowMenu items={menu(c)} /></td>
 					</tr>
 					{#if open.has(c.id)}
@@ -124,6 +129,13 @@
 		hidden={modal.kind === 'delete' ? { targetId: modal.c.id } : { kind: 'contract', targetId: modal.c.id, mode: modal.kind === 'create' ? 'create' : modal.kind === 'repair' ? 'repair' : 'update' }}
 		confirmText={modal.c.stripePi ?? modal.c.id}
 		submitLabel={modal.kind === 'create' ? 'Create in Salesforce' : modal.kind === 'repair' ? 'Complete missing records' : modal.kind === 'sync' ? 'Push values' : 'Delete contract'} on:close={() => (modal = null)} />
+{/if}
+
+{#if copying}
+	<RecordModal kind="sync" title={copying === 'all' ? 'Copy all contracts from Salesforce' : 'Copy contract from Salesforce'}
+		body="Saves the contract, its line items and payment records in the app database, and fetches from Stripe any paid transaction the app never recorded. Nothing is changed in Salesforce. Logged with your reason."
+		recordName={copying === 'all' ? 'Every contract of this account' : copying.ref} recordId={copying === 'all' ? '' : copying.sfdcId ?? ''}
+		action="?/copy" hidden={{ sfContractId: copying === 'all' ? '' : copying.sfdcId ?? '' }} submitLabel="Copy from Salesforce" on:close={() => (copying = null)} />
 {/if}
 
 <style>

@@ -163,6 +163,47 @@ async function activateAccountSubscription(
 	}
 }
 
+// ─── Admin import ──────────────────────────────────────────────────────────
+
+/** Staff recovering a purchase from Stripe: save it in the database only, without writing to Salesforce. */
+export interface ImportOptions {
+	/** The ServiceContract Salesforce already has for this purchase, to link instead of leaving it unsynced. */
+	existingSfContractId: string | null;
+	/** Subscriptions only: false when the plan has ended, so it must not become the account's active plan. */
+	active: boolean;
+}
+
+export const IMPORT_NOT_SENT = 'Imported from Stripe; not sent to Salesforce.';
+
+async function finishImport(
+	contractId: string,
+	accountId: string,
+	paidAt: Date,
+	isSubscription: boolean,
+	opts: ImportOptions,
+	ids: { userId: string; accountId: string; paymentKey: string }
+): Promise<FulfillmentResult> {
+	if (isSubscription) {
+		if (!opts.active) {
+			await sql`UPDATE service_contracts SET status = 'cancelled', payment_status = 'Canceled' WHERE id = ${contractId}`;
+		} else {
+			const prev = await previousAccountSubscription(accountId);
+			if (!(await isSuperseded(prev, paidAt, ids))) {
+				if (prev) {
+					await sql`UPDATE service_contracts SET status = 'cancelled', payment_status = 'Canceled' WHERE id = ${prev.id} AND id <> ${contractId}`;
+				}
+				await sql`UPDATE accounts SET active_subscription_contract_id = ${contractId} WHERE id = ${accountId}`;
+			}
+		}
+	}
+	if (!opts.existingSfContractId) return markSyncFailed(contractId, IMPORT_NOT_SENT);
+	await sql`
+		UPDATE service_contracts SET sfdc_service_contract_id = ${opts.existingSfContractId},
+			sync_status = 'synced', sync_error = NULL, synced_at = now()
+		WHERE id = ${contractId}`;
+	return { localContractId: contractId, syncStatus: 'synced' };
+}
+
 // ─── PaymentIntent flow ────────────────────────────────────────────────────
 
 export interface PaymentSnapshot {
@@ -208,7 +249,11 @@ export async function snapshotPaymentIntent(piId: string): Promise<PaymentSnapsh
  * Insert the contract + line items + push to Salesforce for a SUCCEEDED PaymentIntent.
  * Safe to call any number of times, concurrently.
  */
-export async function persistContract(snapshot: PaymentSnapshot, fallbackUserId: string | null = null): Promise<FulfillmentResult> {
+export async function persistContract(
+	snapshot: PaymentSnapshot,
+	fallbackUserId: string | null = null,
+	importOptions: ImportOptions | null = null
+): Promise<FulfillmentResult> {
 	const { pi, products, kind } = snapshot;
 	if (pi.status !== 'succeeded') return failed('Payment has not succeeded.');
 	if (pi.metadata?.kind === 'balance') return failed('Balance payments do not create a contract.');
@@ -396,6 +441,7 @@ export async function persistContract(snapshot: PaymentSnapshot, fallbackUserId:
 	const accountId = user.account_id;
 	const ids = { userId, accountId, paymentKey: pi.id };
 	return afterClaim(contractId, ids, async () => {
+		if (importOptions) return finishImport(contractId, accountId, paidAt, kind === 'subscription', importOptions, ids);
 		if (!account?.sfdc_account_id || !pricebook2Id) {
 			return markSyncFailed(contractId, !account?.sfdc_account_id ? 'Account not linked to Salesforce.' : 'No SF pricebook id.');
 		}
@@ -515,7 +561,7 @@ export async function fulfillPaymentIntent(pi: Stripe.PaymentIntent): Promise<Fu
  */
 export async function persistSubscriptionContract(
 	session: Stripe.Checkout.Session,
-	opts: { fallbackUserId?: string | null; paidAt?: Date } = {}
+	opts: { fallbackUserId?: string | null; paidAt?: Date; accountId?: string; importOptions?: ImportOptions } = {}
 ): Promise<FulfillmentResult | null> {
 	if (session.payment_status !== 'paid' || session.metadata?.kind !== 'subscription') return null;
 	const subscriptionId =
@@ -528,7 +574,7 @@ export async function persistSubscriptionContract(
 
 	const meta = session.metadata ?? {};
 	const userId = meta.user_id || opts.fallbackUserId || null;
-	const accountId = meta.account_id || null;
+	const accountId = opts.accountId || meta.account_id || null; // an import passes the account that owns it now
 	const pricebookEntryId = meta.pricebook_entry_id;
 	if (!userId || !accountId || !pricebookEntryId) {
 		await logError({
@@ -629,6 +675,7 @@ export async function persistSubscriptionContract(
 	const contractId = localContractId;
 	const ids = { userId, accountId, paymentKey };
 	return afterClaim(contractId, ids, async () => {
+		if (opts.importOptions) return finishImport(contractId, accountId, paidAt, true, opts.importOptions, ids);
 		// Activate locally right away (even if Salesforce sync fails below) so the
 		// customer's paid plan is honoured everywhere in the app immediately.
 		const current = await previousAccountSubscription(accountId);

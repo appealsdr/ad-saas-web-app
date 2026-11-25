@@ -47,10 +47,34 @@ export async function recordStripePayment(pi: Stripe.PaymentIntent): Promise<voi
 	const paymentId = paymentIdOf(pi);
 	if (!paymentId) return;
 	const meta = pi.metadata;
+	await savePayment(pi, {
+		kind: 'balance',
+		accountId: meta.account_id ?? null,
+		sfPaymentId: paymentId,
+		sfPaymentName: meta.payment_name || null,
+		sfLineItemId: meta.line_item_id || null
+	});
+}
+
+export type PaymentKind = 'balance' | 'checkout' | 'subscription' | 'renewal' | 'other';
+
+export interface PaymentDetails {
+	kind: PaymentKind;
+	accountId: string | null;
+	sfPaymentId?: string | null;
+	sfPaymentName?: string | null;
+	sfLineItemId?: string | null;
+	invoiceId?: string | null;
+	subscriptionId?: string | null;
+}
+
+/** Insert or complete the row for a PaymentIntent from Stripe's data. Never overwrites what is already known. */
+export async function savePayment(pi: Stripe.PaymentIntent, d: PaymentDetails): Promise<void> {
+	const meta = pi.metadata ?? {};
 	const charge = await chargeOf(pi);
 	const fee = Number(meta.fee_cents) || 0;
 	const base = Number(meta.base_cents) || pi.amount - fee;
-	const accountId = meta.account_id && UUID.test(meta.account_id) ? meta.account_id : null;
+	const accountId = d.accountId && UUID.test(d.accountId) ? d.accountId : null;
 	const userId = meta.user_id && UUID.test(meta.user_id) ? meta.user_id : null;
 	const methodId = typeof pi.payment_method === 'string' ? pi.payment_method : (pi.payment_method?.id ?? null);
 	const chargeId = charge?.id ?? (typeof pi.latest_charge === 'string' ? pi.latest_charge : null);
@@ -62,7 +86,8 @@ export async function recordStripePayment(pi: Stripe.PaymentIntent): Promise<voi
 			stripe_payment_intent_id, account_id, user_id, stripe_charge_id, stripe_payment_method_id,
 			stripe_payment_method_type, stripe_receipt_email, stripe_receipt_url,
 			amount_cents, fee_cents, charged_cents, currency, paid_at,
-			sfdc_payment_id, sfdc_payment_name, sfdc_contract_line_item_id
+			sfdc_payment_id, sfdc_payment_name, sfdc_contract_line_item_id,
+			kind, stripe_invoice_id, stripe_subscription_id
 		) VALUES (
 			${pi.id},
 			(SELECT id FROM accounts WHERE id = ${accountId}::uuid),
@@ -70,12 +95,18 @@ export async function recordStripePayment(pi: Stripe.PaymentIntent): Promise<voi
 			${chargeId}, ${methodId},
 			${charge?.payment_method_details?.type ?? null}, ${pi.receipt_email ?? null}, ${charge?.receipt_url ?? null},
 			${base}, ${fee}, ${pi.amount}, ${(pi.currency || 'usd').toUpperCase()}, ${paidAt},
-			${paymentId}, ${meta.payment_name || null}, ${meta.line_item_id || null}
+			${d.sfPaymentId ?? null}, ${d.sfPaymentName ?? null}, ${d.sfLineItemId ?? null},
+			${d.kind}, ${d.invoiceId ?? null}, ${d.subscriptionId ?? null}
 		)
 		ON CONFLICT (stripe_payment_intent_id) DO UPDATE SET
+			account_id = COALESCE(stripe_payments.account_id, EXCLUDED.account_id),
 			stripe_charge_id = COALESCE(stripe_payments.stripe_charge_id, EXCLUDED.stripe_charge_id),
 			stripe_payment_method_type = COALESCE(stripe_payments.stripe_payment_method_type, EXCLUDED.stripe_payment_method_type),
-			stripe_receipt_url = COALESCE(stripe_payments.stripe_receipt_url, EXCLUDED.stripe_receipt_url)
+			stripe_receipt_url = COALESCE(stripe_payments.stripe_receipt_url, EXCLUDED.stripe_receipt_url),
+			sfdc_payment_id = COALESCE(stripe_payments.sfdc_payment_id, EXCLUDED.sfdc_payment_id),
+			sfdc_payment_name = COALESCE(stripe_payments.sfdc_payment_name, EXCLUDED.sfdc_payment_name),
+			stripe_invoice_id = COALESCE(stripe_payments.stripe_invoice_id, EXCLUDED.stripe_invoice_id),
+			stripe_subscription_id = COALESCE(stripe_payments.stripe_subscription_id, EXCLUDED.stripe_subscription_id)
 	`;
 }
 
