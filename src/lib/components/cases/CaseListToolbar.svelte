@@ -18,7 +18,7 @@
 	];
 </script>
 
-<div class="bar" class:stacked={view === 'split'}>
+<div class="bar">
 	<div class="search-wrap">
 		<input
 			type="search"
@@ -54,11 +54,9 @@
 		display: flex; align-items: center; flex-wrap: wrap;
 		gap: 16px; margin-bottom: 16px;
 	}
-	.bar.stacked { gap: 8px; margin-bottom: 0; }
+	.bar:last-child { margin-bottom: 0; }
 	.search-wrap { flex: 1; min-width: 220px; max-width: 360px; }
-	.stacked .search-wrap { flex: 1 1 100%; max-width: none; min-width: 0; }
 	.count { font-size: 13px; color: var(--grey-text); margin-left: auto; }
-	.stacked .count { flex: 1 1 100%; font-size: 12px; }
 
 	.segmented {
 		display: flex; flex-wrap: wrap; gap: 4px; background: #fafafa;
@@ -69,7 +67,6 @@
 		font-size: 12px; font-weight: 600; color: var(--grey-text);
 		border-radius: 6px; cursor: pointer; transition: all .15s;
 	}
-	.stacked .segmented button { padding: 5px 9px; }
 	.segmented button:hover { color: var(--navy); }
 	.segmented button:focus-visible { outline: 2px solid var(--orange); outline-offset: 1px; }
 	.segmented button.active {

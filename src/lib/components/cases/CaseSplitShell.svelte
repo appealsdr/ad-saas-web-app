@@ -1,8 +1,9 @@
 <script lang="ts">
 	/**
-	 * Split view frame: a fixed-width list pane and a detail pane, each scrolling on
-	 * its own. At 900px and below it becomes list-first: one pane at a time,
-	 * whichever matches the selection. The detail content stays mounted while the
+	 * Split view frame: the toolbar across the top, then a list pane on the left and
+	 * a detail pane on the right, each scrolling on its own. At 900px and below it
+	 * becomes list-first: one pane at a time, whichever matches the selection (the
+	 * toolbar goes with the list). The detail content stays mounted while the
 	 * next case loads, hidden behind a skeleton.
 	 */
 	export let hasSelection = false;
@@ -14,37 +15,40 @@
 	$: if (selectionKey !== undefined && detailEl) detailEl.scrollTop = 0;
 </script>
 
-<div class="split" class:has-selection={hasSelection}>
-	<section class="list-pane" aria-label="Case list">
-		<div class="list-head"><slot name="toolbar" /></div>
-		<div class="list-body"><slot name="list" /></div>
-	</section>
-	<section class="detail-pane" aria-label="Case detail" aria-busy={loading} bind:this={detailEl}>
-		{#if loading}
-			<div class="skeleton" role="status">
-				<span class="sr-only">Loading case…</span>
-				<div class="bone title"></div>
-				<div class="bone block"></div>
-				<div class="bone block tall"></div>
-				<div class="bone block"></div>
-			</div>
-		{/if}
-		<div class="detail-content" hidden={loading}><slot /></div>
-	</section>
+<div class="split-view" class:has-selection={hasSelection}>
+	<div class="split-head"><slot name="toolbar" /></div>
+	<div class="split">
+		<section class="list-pane" aria-label="Case list">
+			<slot name="list" />
+		</section>
+		<section class="detail-pane" aria-label="Case detail" aria-busy={loading} bind:this={detailEl}>
+			{#if loading}
+				<div class="skeleton" role="status">
+					<span class="sr-only">Loading case…</span>
+					<div class="bone title"></div>
+					<div class="bone block"></div>
+					<div class="bone block tall"></div>
+					<div class="bone block"></div>
+				</div>
+			{/if}
+			<div class="detail-content" hidden={loading}><slot /></div>
+		</section>
+	</div>
 </div>
 
 <style>
+	.split-view { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+	/* Same offsets as the table view, so the toolbar stays put when switching views. */
+	.split-head { flex-shrink: 0; padding: 22px 26px 16px; border-bottom: 1px solid var(--grey-line); }
 	.split {
 		flex: 1; min-height: 0; display: grid;
 		grid-template-columns: minmax(320px, 38%) minmax(0, 1fr);
 		grid-template-rows: minmax(0, 1fr);
 	}
 	.list-pane {
-		display: flex; flex-direction: column; min-height: 0; background: white;
+		min-height: 0; overflow-y: auto; background: white;
 		border-right: 4px solid var(--grey-line);
 	}
-	.list-head { flex-shrink: 0; padding: 12px 16px 8px; border-bottom: 1px solid var(--grey-line); }
-	.list-body { flex: 1; min-height: 0; overflow-y: auto; }
 	.detail-pane { min-width: 0; min-height: 0; overflow-y: auto; }
 	.detail-content:not([hidden]) { display: flex; flex-direction: column; min-height: 100%; }
 
@@ -63,7 +67,8 @@
 	@media (max-width: 900px) {
 		.split { grid-template-columns: minmax(0, 1fr); }
 		.list-pane { border-right: 0; }
-		.split.has-selection .list-pane { display: none; }
-		.split:not(.has-selection) .detail-pane { display: none; }
+		.split-head { padding: 12px 16px; }
+		.has-selection .split-head, .has-selection .list-pane { display: none; }
+		.split-view:not(.has-selection) .detail-pane { display: none; }
 	}
 </style>
