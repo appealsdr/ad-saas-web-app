@@ -61,9 +61,9 @@
 						</ul>
 					{/if}
 				</div>
-			{:else if data.contractInfo.syncStatus === 'already-exists'}
+			{:else if data.contractInfo.syncStatus === 'pending'}
 				<div class="contract-note muted">
-					Service Contract was already on file (idempotent confirm).
+					Your services are being set up. They will appear under your Services shortly.
 				</div>
 			{:else if data.contractInfo.syncStatus === 'failed'}
 				<div class="contract-note warn">
