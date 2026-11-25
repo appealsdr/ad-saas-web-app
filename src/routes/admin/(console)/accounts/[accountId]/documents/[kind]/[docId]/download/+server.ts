@@ -6,16 +6,13 @@
  * another account returns 404. Every download is audited.
  */
 import { error, redirect } from '@sveltejs/kit';
-import { createReadStream, statSync } from 'node:fs';
-import { isAbsolute, join, normalize, sep } from 'node:path';
-import { Readable } from 'node:stream';
 import type { RequestHandler } from './$types';
 import { sql } from '$lib/server/db';
-import { env } from '$env/dynamic/private';
 import { workspace } from '$lib/server/admin/workspace';
 import { auditActor, clientIp, isUuid } from '$lib/server/admin/guard';
 import { recordAudit } from '$lib/server/admin/audit';
 import { getDownloadUrl } from '$lib/server/storage/s3';
+import { diskFileResponse } from '$lib/server/files/disk_file';
 
 interface Row {
 	original_name: string;
@@ -59,7 +56,7 @@ export const GET: RequestHandler = async (event) => {
 		try {
 			url = await getDownloadUrl(row.s3_key, row.original_name, {
 				disposition: inline ? 'inline' : 'attachment',
-				contentType: inline ? row.mime_type : undefined
+				contentType: row.mime_type
 			});
 		} catch {
 			throw error(502, 'Could not generate a download URL.');
@@ -67,23 +64,13 @@ export const GET: RequestHandler = async (event) => {
 		throw redirect(302, url);
 	}
 	if (row.storage_path) {
-		const raw = env.UPLOADS_DIR?.trim() || './uploads';
-		const root = isAbsolute(raw) ? raw : join(process.cwd(), raw);
-		const abs = normalize(join(root, row.storage_path));
-		if (!abs.startsWith(normalize(root) + sep)) throw error(404, 'Not found.');
-		try {
-			const st = statSync(abs);
-			return new Response(Readable.toWeb(createReadStream(abs)) as ReadableStream, {
-				headers: {
-					'content-type': row.mime_type ?? 'application/octet-stream',
-					'content-length': String(st.size),
-					'content-disposition': `${inline ? 'inline' : 'attachment'}; filename="${encodeURIComponent(row.original_name)}"`,
-					'x-content-type-options': 'nosniff'
-				}
-			});
-		} catch {
-			throw error(404, 'File is missing from storage.');
-		}
+		const response = diskFileResponse(
+			row.storage_path,
+			{ fileName: row.original_name, contentType: row.mime_type },
+			inline ? 'inline' : 'attachment'
+		);
+		if (!response) throw error(404, 'File is missing from storage.');
+		return response;
 	}
 	throw error(404, 'No stored file for this document.');
 };
