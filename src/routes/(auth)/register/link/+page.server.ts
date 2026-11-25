@@ -24,6 +24,7 @@ import {
 } from '$lib/server/salesforce';
 import { ensureAccountFolders } from '$lib/server/storage/s3-paths';
 import { ensureOwnerAccountContact } from '$lib/server/account/contacts';
+import { soqlString } from '$lib/server/salesforce/soql';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const SESSION_COOKIE_MAX_AGE = 60 * 60 * 3;
@@ -43,7 +44,7 @@ interface SfStore {
 async function listSfStores(sfdcAccountId: string): Promise<SfStore[]> {
 	try {
 		const r = await sfdcQuery<SfStore>(
-			`SELECT Id, Name, Marketplaces__c, Seller_ID__c, Seller_Account_Primary_Email__c, Store_Email__c, Business_Name__c, Country__c, Description__c FROM Store__c WHERE Account__c = '${sfdcAccountId}'`
+			`SELECT Id, Name, Marketplaces__c, Seller_ID__c, Seller_Account_Primary_Email__c, Store_Email__c, Business_Name__c, Country__c, Description__c FROM Store__c WHERE Account__c = ${soqlString(sfdcAccountId)}`
 		);
 		return r.records;
 	} catch (e) {

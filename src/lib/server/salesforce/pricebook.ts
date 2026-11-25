@@ -22,6 +22,7 @@
 import { env } from '$env/dynamic/private';
 import { sfdcQuery } from './client';
 import { logError } from '../error_log';
+import { soqlString } from './soql';
 
 const CACHE_TTL_MS = 5 * 60 * 1000;
 
@@ -149,8 +150,6 @@ function bucketByCategory(rows: PricebookEntryRow[]): CatalogCategory[] {
 }
 
 async function fetchCatalog(pricebookName: string): Promise<CatalogCategory[]> {
-	// Salesforce SOQL: escape single quotes by doubling.
-	const escaped = pricebookName.replace(/'/g, "''");
 	const build = (withDeposit: boolean) => {
 		const f = depositFields();
 		return `
@@ -158,7 +157,7 @@ async function fetchCatalog(pricebookName: string): Promise<CatalogCategory[]> {
 		       Product2.Id, Product2.Name, Product2.Description,
 		       Product2.Family, Product2.Category__c, Product2.IsActive
 		FROM PricebookEntry
-		WHERE Pricebook2.Name = '${escaped}'
+		WHERE Pricebook2.Name = ${soqlString(pricebookName)}
 		  AND IsActive = true
 		  AND Product2.IsActive = true
 		ORDER BY Product2.Category__c NULLS LAST, Product2.Name

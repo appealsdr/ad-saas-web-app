@@ -22,6 +22,7 @@ import { sobjectCreate, sobjectUpdate, sfdcQuery, SalesforceApiError } from './c
 import { sql } from '../db';
 import { logError } from '../error_log';
 import { VUID_FIELD } from './vuid';
+import { soqlString } from './soql';
 
 /**
  * The Salesforce standard Account object has NO `Email` field — it's a
@@ -83,10 +84,9 @@ function normalizeWebsite(raw: string): string {
 export async function findContactByEmail(
 	email: string
 ): Promise<{ id: string; accountId: string | null } | null> {
-	const escaped = email.replace(/'/g, "''");
 	try {
 		const result = await sfdcQuery<{ Id: string; AccountId: string | null }>(
-			`SELECT Id, AccountId FROM Contact WHERE Email = '${escaped}' LIMIT 1`
+			`SELECT Id, AccountId FROM Contact WHERE Email = ${soqlString(email)} LIMIT 1`
 		);
 		const row = result.records[0];
 		return row ? { id: row.Id, accountId: row.AccountId ?? null } : null;

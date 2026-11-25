@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { matchesIssueFilter, isWaitingOnClient, type IssueFilter } from '$lib/cases/case-list';
 	import { enhance } from '$app/forms';
 	import { page } from '$app/stores';
 	import Topbar from '$components/layout/Topbar.svelte';
@@ -72,10 +73,6 @@
 	function badgeClass(status: string): string {
 		return CASE_STATUS_BADGE[status.toLowerCase()] ?? 'badge-grey';
 	}
-	function isWaitingOnClient(status: string): boolean {
-		const s = status.toLowerCase();
-		return s.includes('waiting') || s.includes('pending') || s.includes('awaiting');
-	}
 
 	// ── Formatters ──
 	function fmtDateShort(iso: string | null | undefined) {
@@ -94,7 +91,6 @@
 	}
 
 	// ── Issue filter (mockup-style pills) ──
-	type IssueFilter = 'all' | 'open' | 'in_progress' | 'waiting' | 'resolved';
 	let issueFilter: IssueFilter = 'all';
 
 	// Cases | Contracts | Payments tabs
@@ -105,16 +101,7 @@
 		paid: ['Paid', '#DCFCE7', '#15803d'], due: ['Due', '#FEF3C7', '#92400e'], failed: ['Action required', '#FEE2E2', '#b91c1c'],
 		closed: ['Closed', '#F1F5F9', '#475569'], inactive: ['Not Active', '#F1F5F9', '#475569'], ready: ['Ready to pay', '#DBEAFE', '#1d4ed8']
 	};
-	function matchesFilter(status: string, filter: IssueFilter): boolean {
-		if (filter === 'all') return true;
-		const s = status.toLowerCase();
-		if (filter === 'open') return s.includes('open') || s === 'new';
-		if (filter === 'in_progress') return s.includes('progress') || s.includes('working');
-		if (filter === 'waiting') return s.includes('waiting') || s.includes('pending') || s.includes('awaiting');
-		if (filter === 'resolved') return s.includes('closed') || s.includes('resolved');
-		return false;
-	}
-	$: filteredCases = (data.cases ?? []).filter((c) => matchesFilter(c.Status, issueFilter));
+	$: filteredCases = (data.cases ?? []).filter((c) => matchesIssueFilter(c.Status, issueFilter));
 
 	// ── Counts for the financial overview — from Salesforce Store__c rollups,
 	//    falling back to a local tally only if the SF field came back null

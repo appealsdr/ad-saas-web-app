@@ -26,18 +26,19 @@ import { updateSalesforceAccount, updateSalesforceContact } from '../salesforce/
 import { logError } from '../error_log';
 import { recordAudit, type AuditActor } from './audit';
 import { ActionError, requireReason } from './actions';
+import { isSalesforceId, soqlList, soqlString } from '../salesforce/soql';
 
 export type SfState = 'synced' | 'not_in_sf' | 'unknown';
 export type SfObject = 'Account' | 'Contact' | 'Store__c' | 'ServiceContract';
 
 /** Ids that exist in Salesforce, or null when Salesforce could not be queried. */
 export async function sfExisting(object: SfObject, ids: (string | null | undefined)[]): Promise<Set<string> | null> {
-	const clean = [...new Set(ids.filter((i): i is string => !!i && /^[a-zA-Z0-9]{15,18}$/.test(i)))];
+	const clean = [...new Set(ids.filter(isSalesforceId))];
 	const found = new Set<string>();
 	if (!clean.length) return found;
 	try {
 		for (let i = 0; i < clean.length; i += 150) {
-			const list = clean.slice(i, i + 150).map((id) => `'${id}'`).join(',');
+			const list = soqlList(clean.slice(i, i + 150));
 			const res = await sfdcQuery<{ Id: string }>(`SELECT Id FROM ${object} WHERE Id IN (${list})`, { paginate: true });
 			for (const r of res.records) {
 				found.add(r.Id);
@@ -388,8 +389,8 @@ async function repairContract(accountId: string, c: ContractRowFull): Promise<st
 	const input = await contractInput(accountId, c);
 	const sfId = c.sfdc_service_contract_id!;
 	const [slines, cases] = await Promise.all([
-		sfdcQuery<{ Id: string; PricebookEntryId: string }>(`SELECT Id, PricebookEntryId FROM ContractLineItem WHERE ServiceContractId = '${sfId}' ORDER BY CreatedDate`),
-		sfdcQuery<{ Id: string; Contract_Line_Item__c: string | null }>(`SELECT Id, Contract_Line_Item__c FROM Case WHERE Contract__c = '${sfId}'`)
+		sfdcQuery<{ Id: string; PricebookEntryId: string }>(`SELECT Id, PricebookEntryId FROM ContractLineItem WHERE ServiceContractId = ${soqlString(sfId)} ORDER BY CreatedDate`),
+		sfdcQuery<{ Id: string; Contract_Line_Item__c: string | null }>(`SELECT Id, Contract_Line_Item__c FROM Case WHERE Contract__c = ${soqlString(sfId)}`)
 	]);
 	// Match local lines to the Salesforce line items that already exist (by price book entry, in order).
 	const pool = [...slines.records];

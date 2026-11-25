@@ -10,6 +10,7 @@ import { recordIntegrationEvent } from './audit';
 import { ApiError } from './errors';
 import type { IntegrationPermission } from './permissions';
 import { logError, describeError } from '../error_log';
+import { isSalesforceId } from '../salesforce/soql';
 
 export interface ApiContext {
 	event: RequestEvent;
@@ -127,14 +128,13 @@ export async function readJsonObject(request: Request, maxBytes = 256 * 1024): P
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const SF_ID_RE = /^[a-zA-Z0-9]{15,18}$/;
 
 export function requireUuid(v: string | undefined, what: string): string {
 	if (!v || !UUID_RE.test(v)) throw new ApiError(404, 'NOT_FOUND', `${what} not found.`);
 	return v.toLowerCase();
 }
 export function requireSfId(v: string | undefined, what: string): string {
-	if (!v || !SF_ID_RE.test(v)) throw new ApiError(404, 'NOT_FOUND', `${what} not found.`);
+	if (!isSalesforceId(v)) throw new ApiError(404, 'NOT_FOUND', `${what} not found.`);
 	return v;
 }
 

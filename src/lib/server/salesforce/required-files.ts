@@ -13,6 +13,7 @@
 import { sfdcQuery, sobjectUpdate, SalesforceApiError } from './client';
 import { createS3Document } from './s3-documents';
 import { logError } from '$lib/server/error_log';
+import { isSalesforceId, soqlList, soqlString } from './soql';
 
 const REQUIRED_FILE_OBJECT = 'Required_File__c';
 
@@ -117,8 +118,8 @@ function mapRow(r: RequiredFileRow): RequiredFile {
 type ListResult = { ok: true; files: RequiredFile[] } | { ok: false; error: string };
 
 async function listBy(field: 'Case__c' | 'Store__c', sfId: string): Promise<ListResult> {
-	const escaped = sfId.replace(/'/g, "''");
-	const soql = `SELECT ${SELECT_FIELDS} FROM ${REQUIRED_FILE_OBJECT} WHERE ${field} = '${escaped}' ORDER BY Name ASC LIMIT 200`;
+	if (!isSalesforceId(sfId)) return { ok: true, files: [] };
+	const soql = `SELECT ${SELECT_FIELDS} FROM ${REQUIRED_FILE_OBJECT} WHERE ${field} = ${soqlString(sfId)} ORDER BY Name ASC LIMIT 200`;
 	try {
 		const result = await sfdcQuery<RequiredFileRow>(soql);
 		return { ok: true, files: result.records.map(mapRow) };
@@ -160,8 +161,9 @@ type BatchListResult =
 	| { ok: false; error: string };
 
 async function listByIn(field: 'Case__c' | 'Store__c', ids: string[]): Promise<BatchListResult> {
-	if (ids.length === 0) return { ok: true, files: [] };
-	const literals = ids.map((id) => `'${id.replace(/'/g, "''")}'`).join(',');
+	const validIds = ids.filter(isSalesforceId);
+	if (validIds.length === 0) return { ok: true, files: [] };
+	const literals = soqlList(validIds);
 	const soql = `SELECT ${field}, ${SELECT_FIELDS} FROM ${REQUIRED_FILE_OBJECT} WHERE ${field} IN (${literals}) ORDER BY Name ASC LIMIT 1000`;
 	try {
 		const result = await sfdcQuery<RequiredFileRow & Record<string, unknown>>(soql, {

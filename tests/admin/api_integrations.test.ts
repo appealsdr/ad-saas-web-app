@@ -9,7 +9,7 @@ describe('permissions + ip helpers', () => {
 		expect(normalizePermissions(['cases.read', 'stores.list', 'cases.read'])).toEqual(['stores.list', 'cases.read']);
 		expect(() => normalizePermissions(['stores.*'])).toThrow(/Unsupported/);
 		expect(() => normalizePermissions([])).toThrow(/At least one/);
-		expect(INTEGRATION_PERMISSIONS).toHaveLength(11);
+		expect(INTEGRATION_PERMISSIONS).toHaveLength(12);
 	});
 	it('diffs permissions safely', () => {
 		expect(diffPermissions(['a', 'b'], ['b', 'c'])).toEqual({ addedPermissions: ['c'], removedPermissions: ['a'] });
@@ -63,7 +63,7 @@ d('multi-integration API', async () => {
 
 		const a = (await getIntegration(acct.id, erp.id))!;
 		const b = (await getIntegration(acct.id, rep.id))!;
-		expect(a.permissions).toHaveLength(11); // new integration => all permissions by default
+		expect(a.permissions).toHaveLength(12); // new integration => all permissions by default
 		expect(b.permissions).toEqual(['stores.list', 'cases.list']);
 		expect(a.default_user_id).toBe(john.id);
 		expect(b.default_user_id).toBe(jane.id);
@@ -85,7 +85,7 @@ d('multi-integration API', async () => {
 		await createIntegration(ctx, other.acct.id, { name: 'Uploader', defaultUserId: other.john.id }); // other account: fine
 		// A second integration does NOT silently inherit the first's profile…
 		const second = await createIntegration(ctx, acct.id, { name: 'Second', defaultUserId: john.id });
-		expect((await getIntegration(acct.id, second.id))!.permissions).toHaveLength(11);
+		expect((await getIntegration(acct.id, second.id))!.permissions).toHaveLength(12);
 		// …unless copying is explicitly requested.
 		const third = await createIntegration(ctx, acct.id, { name: 'Third', defaultUserId: john.id, copyPermissionsFromId: first.id });
 		expect((await getIntegration(acct.id, third.id))!.permissions).toEqual(['files.upload']);

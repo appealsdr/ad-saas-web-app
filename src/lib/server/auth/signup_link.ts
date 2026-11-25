@@ -12,6 +12,7 @@
  */
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { env } from '$env/dynamic/private';
+import { isSalesforceId } from '../salesforce/soql';
 
 export interface SignupLinkPayload {
 	sfdcAccountId: string;
@@ -21,7 +22,6 @@ export interface SignupLinkPayload {
 	expiresAt: number;
 }
 
-const SF_ID_RE = /^[a-zA-Z0-9]{15}([a-zA-Z0-9]{3})?$/;
 
 function sign(part: string, secret: string): Buffer {
 	return createHmac('sha256', secret).update(part).digest();
@@ -61,7 +61,7 @@ export function verifySignupToken(
 	}
 	try {
 		const b = JSON.parse(Buffer.from(part, 'base64url').toString('utf8'));
-		if (!SF_ID_RE.test(b.a) || !SF_ID_RE.test(b.c) || (b.k != null && !SF_ID_RE.test(b.k)) || typeof b.n !== 'string' || typeof b.e !== 'number') {
+		if (!isSalesforceId(b.a) || !isSalesforceId(b.c) || (b.k != null && !isSalesforceId(b.k)) || typeof b.n !== 'string' || typeof b.e !== 'number') {
 			return { ok: false, reason: 'invalid' };
 		}
 		if (b.e < Date.now() / 1000) return { ok: false, reason: 'expired' };

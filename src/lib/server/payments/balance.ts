@@ -16,8 +16,10 @@ import { sql } from '../db';
 import { sfdcQuery } from '../salesforce/client';
 import { sobjectUpdate } from '../salesforce/client';
 import { getStripe } from '../stripe';
+import { markSalesforceStatus, recordStripePayment, storePaidContract, type SfStatus } from './records';
 import { logError } from '../error_log';
 import { normalizeMethod, type FeeBreakdown } from '../../payments/fees';
+import { isSalesforceId, soqlString } from '../salesforce/soql';
 
 export const STATUS_REQUEST = 'Request Payment';
 export const STATUS_INACTIVE = 'Not Active';
@@ -29,15 +31,14 @@ export interface SfBalancePayment {
 }
 export interface OwnedPayment { payment: SfBalancePayment; contractId: string; currency: string; accountId: string }
 
-const SF_ID = /^[a-zA-Z0-9]{15,18}$/;
-export const isSfId = (v: string) => SF_ID.test(v);
+export { isSalesforceId as isSfId };
 
 /** A Payment__c, but only if it belongs to a contract of THIS account (tenancy). */
 export async function getOwnedPayment(accountId: string, sfPaymentId: string): Promise<OwnedPayment | null> {
-	if (!isSfId(sfPaymentId)) return null;
+	if (!isSalesforceId(sfPaymentId)) return null;
 	const res = await sfdcQuery<SfBalancePayment>(
 		`SELECT Id, Name, Amount__c, Status__c, Payment_Type__c, Description__c, Service_Contract__c, Contract_Line_Item__c, Stripe_Payment_Intent_Id__c
-		 FROM Payment__c WHERE Id = '${sfPaymentId}' LIMIT 1`
+		 FROM Payment__c WHERE Id = ${soqlString(sfPaymentId)} LIMIT 1`
 	);
 	const p = res.records[0];
 	if (!p?.Service_Contract__c) return null;
@@ -47,9 +48,9 @@ export async function getOwnedPayment(accountId: string, sfPaymentId: string): P
 	// Contract that lives only in Salesforce (linked through a sign-up link): it belongs to this account
 	// when its ServiceContract.AccountId is the account's linked Salesforce Account.
 	const [acct] = await sql<{ sfdc_account_id: string | null }[]>`SELECT sfdc_account_id FROM accounts WHERE id = ${accountId}`;
-	if (!acct?.sfdc_account_id || !isSfId(acct.sfdc_account_id)) return null;
+	if (!acct?.sfdc_account_id || !isSalesforceId(acct.sfdc_account_id)) return null;
 	const sc = await sfdcQuery<{ Id: string }>(
-		`SELECT Id FROM ServiceContract WHERE Id = '${p.Service_Contract__c}' AND AccountId = '${acct.sfdc_account_id}' LIMIT 1`
+		`SELECT Id FROM ServiceContract WHERE Id = ${soqlString(p.Service_Contract__c)} AND AccountId = ${soqlString(acct.sfdc_account_id)} LIMIT 1`
 	);
 	return sc.records[0] ? { payment: p, contractId: p.Service_Contract__c, currency: 'usd', accountId } : null;
 }
@@ -106,30 +107,48 @@ export async function createBalanceIntent(
  * Apply a SUCCEEDED balance PaymentIntent to its existing Payment__c: Stripe details, payment date, Status Paid.
  * Called from the return page AND the webhook — the first caller claims the PaymentIntent, later calls (and
  * Stripe retries) are no-ops. Never inserts a Payment__c.
+ *
+ * The payment and its contract are also stored in the app (records.ts). That never blocks the Salesforce update;
+ * the webhook calls `ensurePaymentStored` to retry whatever could not be stored here.
  */
 export async function applyBalancePaid(pi: Stripe.PaymentIntent): Promise<'applied' | 'already' | 'ignored' | 'mismatch'> {
 	if (pi.metadata?.kind !== 'balance' || !pi.metadata.payment_id) return 'ignored';
 	if (pi.status !== 'succeeded') return 'ignored';
 	const paymentId = pi.metadata.payment_id;
-	if (!isSfId(paymentId)) return 'ignored';
+	if (!isSalesforceId(paymentId)) return 'ignored';
+
+	await bestEffort(pi, 'record_payment', () => recordStripePayment(pi));
 
 	const claimed = await sql<{ stripe_payment_intent_id: string }[]>`
 		INSERT INTO balance_payment_applications (stripe_payment_intent_id, sfdc_payment_id) VALUES (${pi.id}, ${paymentId})
 		ON CONFLICT (stripe_payment_intent_id) DO NOTHING RETURNING stripe_payment_intent_id`;
-	if (!claimed.length) return 'already';
+	if (!claimed.length) {
+		await bestEffort(pi, 'store_contract', () => storePaidContract(pi));
+		return 'already';
+	}
+
+	const finish = async (status: SfStatus) => {
+		await bestEffort(pi, 'mark_payment', () => markSalesforceStatus(pi.id, status));
+		await bestEffort(pi, 'store_contract', () => storePaidContract(pi, { refresh: true }));
+	};
 
 	try {
 		const res = await sfdcQuery<SfBalancePayment>(
-			`SELECT Id, Name, Amount__c, Status__c, Payment_Type__c, Description__c, Service_Contract__c, Contract_Line_Item__c, Stripe_Payment_Intent_Id__c FROM Payment__c WHERE Id = '${paymentId}' LIMIT 1`
+			`SELECT Id, Name, Amount__c, Status__c, Payment_Type__c, Description__c, Service_Contract__c, Contract_Line_Item__c, Stripe_Payment_Intent_Id__c FROM Payment__c WHERE Id = ${soqlString(paymentId)} LIMIT 1`
 		);
 		const rec = res.records[0];
 		if (!rec) throw new Error('Payment__c not found.');
-		if (rec.Status__c === 'Paid') return 'already'; // paid by something else — never re-apply
+		if (rec.Status__c === 'Paid') {
+			// Paid by something else — never re-apply.
+			await finish(rec.Stripe_Payment_Intent_Id__c === pi.id ? 'applied' : 'already_paid');
+			return 'already';
+		}
 		const piFee = Number(pi.metadata?.fee_cents) || 0;
 		const baseCents = Number(pi.metadata.base_cents ?? pi.amount - piFee);
 		if (cents(rec.Amount__c ?? 0) !== baseCents) {
 			await logError({ source: 'payments.balance', operation: 'amount_mismatch', accountId: pi.metadata.account_id, errorMessage: `Stripe charged ${pi.amount} cents but ${rec.Name} is ${rec.Amount__c}.`, context: { paymentIntentId: pi.id, paymentId } });
 			await sql`DELETE FROM balance_payment_applications WHERE stripe_payment_intent_id = ${pi.id}`;
+			await finish('mismatch');
 			return 'mismatch';
 		}
 		const pm = typeof pi.payment_method === 'string' ? pi.payment_method : pi.payment_method?.id ?? null;
@@ -142,15 +161,35 @@ export async function applyBalancePaid(pi: Stripe.PaymentIntent): Promise<'appli
 			Stripe_Payment_Intent_Id__c: pi.id,
 			...(pm ? { Payment_Method__c: pm } : {})
 		});
+		await finish('applied');
 		return 'applied';
 	} catch (e) {
 		// Let a retry (webhook redelivery / reload) try again.
 		await sql`DELETE FROM balance_payment_applications WHERE stripe_payment_intent_id = ${pi.id}`.catch(() => {});
+		await bestEffort(pi, 'mark_payment', () => markSalesforceStatus(pi.id, 'failed', e instanceof Error ? e.message : String(e)));
 		await logError({
 			source: 'payments.balance', operation: 'apply_paid', accountId: pi.metadata.account_id,
 			errorMessage: e instanceof Error ? e.message : String(e), context: { paymentIntentId: pi.id, paymentId }
 		});
 		throw e;
+	}
+}
+
+/** Store in the app whatever is still missing for a successful payment. Throws, so a webhook can be retried. */
+export async function ensurePaymentStored(pi: Stripe.PaymentIntent): Promise<void> {
+	await recordStripePayment(pi);
+	await storePaidContract(pi);
+}
+
+/** Local record keeping must not turn a collected payment into an error for the customer. */
+async function bestEffort(pi: Stripe.PaymentIntent, operation: string, run: () => Promise<void>): Promise<void> {
+	try {
+		await run();
+	} catch (e) {
+		await logError({
+			source: 'payments.records', operation, accountId: pi.metadata?.account_id,
+			errorMessage: e instanceof Error ? e.message : String(e), context: { paymentIntentId: pi.id, paymentId: pi.metadata?.payment_id }
+		});
 	}
 }
 

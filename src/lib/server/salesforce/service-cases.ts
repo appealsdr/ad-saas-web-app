@@ -10,6 +10,7 @@ import { sfdcQuery, sobjectCreate, SalesforceApiError } from './client';
 import { logError } from '../error_log';
 import { createOnboardingDocsRequiredFile } from './onboarding-docs';
 import type { CaseSummary } from './cases';
+import { isSalesforceId, soqlString } from './soql';
 
 const CASE_OBJECT = 'Case';
 
@@ -104,11 +105,11 @@ export async function createServiceCase(
 export async function listCasesForContract(
 	sfdcContractId: string
 ): Promise<{ ok: true; cases: CaseSummary[] } | { ok: false; error: string }> {
-	const escaped = sfdcContractId.replace(/'/g, "''");
+	if (!isSalesforceId(sfdcContractId)) return { ok: true, cases: [] };
 	const soql = `
 		SELECT Id, CaseNumber, Subject, Status, Priority, CreatedDate, LastModifiedDate, RecordType.Name
 		FROM ${CASE_OBJECT}
-		WHERE Contract__c = '${escaped}'
+		WHERE Contract__c = ${soqlString(sfdcContractId)}
 		ORDER BY CreatedDate DESC
 		LIMIT 200
 	`.trim();

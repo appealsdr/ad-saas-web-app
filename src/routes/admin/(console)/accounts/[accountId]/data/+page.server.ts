@@ -17,6 +17,7 @@ const GROUPS: Record<string, string> = {
 	accounts: 'Account', users: 'Account', account_contacts: 'Account',
 	stores: 'Stores & documents', store_documents: 'Stores & documents', case_documents: 'Stores & documents',
 	service_contracts: 'Billing', service_contract_line_items: 'Billing',
+	stripe_payments: 'Billing', salesforce_contracts: 'Billing', salesforce_contract_line_items: 'Billing', salesforce_contract_payments: 'Billing',
 	ai_chat_messages: 'Activity',
 	sessions: 'Security', password_reset_tokens: 'Security', password_history: 'Security', oauth_accounts: 'Security', spapi_oauth_states: 'Security',
 	error_log: 'Logs', activity_log: 'Logs', admin_audit_events: 'Logs'

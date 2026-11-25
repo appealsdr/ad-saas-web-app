@@ -271,6 +271,7 @@ export async function mergeAccounts(ctx: Ctx, survivorId: string, sourceId: stri
 			if (c.contractIds.length) {
 				const rows = await tx<{ id: string }[]>`UPDATE service_contracts SET account_id = ${survivorId} WHERE id = ANY(${c.contractIds}) AND account_id = ${sourceId} RETURNING id`;
 				movedContractIds.push(...rows.map((r) => r.id));
+				if (movedContractIds.length) await tx`UPDATE stripe_payments SET account_id = ${survivorId} WHERE service_contract_id = ANY(${movedContractIds}) AND account_id = ${sourceId}`;
 				const sub = source.account.active_subscription_contract_id;
 				if (sub && movedContractIds.includes(sub)) {
 					await tx`UPDATE accounts SET active_subscription_contract_id = NULL WHERE id = ${sourceId}`;

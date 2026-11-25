@@ -6,7 +6,8 @@
  * service_contracts row needed. Collectibility is still enforced at pay time (balance.ts).
  */
 import { sfdcQuery } from '../salesforce/client';
-import { isSfId, STATUS_REQUEST } from './balance';
+import { STATUS_REQUEST } from './balance';
+import { isSalesforceId, soqlList, soqlString } from '../salesforce/soql';
 
 export interface OutstandingPayment {
 	id: string;
@@ -35,19 +36,19 @@ export interface OutstandingContract {
 const UNPAID = [STATUS_REQUEST];
 
 export async function listOutstandingContracts(sfdcAccountId: string | null): Promise<OutstandingContract[]> {
-	if (!sfdcAccountId || !isSfId(sfdcAccountId)) return [];
+	if (!sfdcAccountId || !isSalesforceId(sfdcAccountId)) return [];
 	const contracts = await sfdcQuery<{ Id: string; Name: string | null; ContractNumber: string | null; StartDate: string | null; EndDate: string | null }>(
-		`SELECT Id, Name, ContractNumber, StartDate, EndDate FROM ServiceContract WHERE AccountId = '${sfdcAccountId}' ORDER BY CreatedDate DESC LIMIT 200`,
+		`SELECT Id, Name, ContractNumber, StartDate, EndDate FROM ServiceContract WHERE AccountId = ${soqlString(sfdcAccountId)} ORDER BY CreatedDate DESC LIMIT 200`,
 		{ paginate: true }
 	);
 	if (!contracts.records.length) return [];
-	const ids = contracts.records.map((c) => `'${c.Id}'`).join(',');
+	const ids = soqlList(contracts.records.map((c) => c.Id));
 	const pays = await sfdcQuery<{
 		Id: string; Name: string; Amount__c: number | null; Status__c: string | null; Description__c: string | null;
 		Payment_Date__c: string | null; Service_Contract__c: string; Payment_Type__c: string | null; Contract_Line_Item__c: string | null;
 	}>(
 		`SELECT Id, Name, Amount__c, Status__c, Description__c, Payment_Date__c, Service_Contract__c, Payment_Type__c, Contract_Line_Item__c
-		 FROM Payment__c WHERE Service_Contract__c IN (${ids}) AND Status__c IN (${UNPAID.map((s) => `'${s}'`).join(',')})
+		 FROM Payment__c WHERE Service_Contract__c IN (${ids}) AND Status__c IN (${soqlList(UNPAID)})
 		 ORDER BY Payment_Date__c ASC NULLS LAST, CreatedDate ASC`,
 		{ paginate: true }
 	);

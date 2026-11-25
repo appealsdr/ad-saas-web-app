@@ -11,6 +11,7 @@ import { recordIntegrationEvent } from '$lib/server/integrations/audit';
 import { ApiError } from '$lib/server/integrations/errors';
 import { clientIp } from '$lib/server/integrations/http';
 import { handleRpc, isRpcRequest, rpcError } from '$lib/server/mcp/protocol';
+import type { McpAudit } from '$lib/server/mcp/tools';
 import { logError, describeError } from '$lib/server/error_log';
 import { mcpAvailable } from '$lib/server/mcp/killswitch';
 import { hitRateLimit } from '$lib/server/admin/rate_limit';
@@ -65,7 +66,7 @@ export const POST: RequestHandler = async (event) => {
 	}
 	if (!isRpcRequest(msg)) return json(rpcError(null, -32600, 'Invalid request (send one JSON-RPC message).'), { status: 400, headers });
 
-	const audit: { tool?: string; permission?: string; errorCode?: string } = {};
+	const audit: { tool?: string; permission?: string; errorCode?: string } & McpAudit = {};
 	let outcome = 'success';
 	let res: object | null;
 	try {
@@ -87,7 +88,8 @@ export const POST: RequestHandler = async (event) => {
 		await recordIntegrationEvent({
 			integrationId: principal.integrationId, integrationName: principal.integrationName, credentialId: principal.credentialId,
 			accountId: principal.accountId, defaultUserId: principal.defaultUserId, requiredPermission: audit.permission ?? null,
-			operation: `mcp.${audit.tool ?? 'unknown'}`, resourceType: 'mcp_tool', outcome, errorCode: audit.errorCode ?? null, httpStatus: 200, requestId, sourceIp: ip, durationMs: Date.now() - started
+			operation: `mcp.${audit.tool ?? 'unknown'}`, resourceType: audit.resourceType ?? 'mcp_tool', resourceId: audit.resourceId ?? null,
+			metadata: audit.metadata ?? null, outcome, errorCode: audit.errorCode ?? null, httpStatus: 200, requestId, sourceIp: ip, durationMs: Date.now() - started
 		});
 	}
 	if (res === null) return new Response(null, { status: 202, headers });

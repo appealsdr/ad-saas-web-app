@@ -12,15 +12,8 @@
 import { error, redirect } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { sql } from '$lib/server/db';
-import { env } from '$env/dynamic/private';
-import { createReadStream, statSync } from 'node:fs';
-import { isAbsolute, join } from 'node:path';
 import { getDownloadUrl } from '$lib/server/storage/s3';
-
-function uploadsRoot(): string {
-	const raw = env.UPLOADS_DIR?.trim() || './uploads';
-	return isAbsolute(raw) ? raw : join(process.cwd(), raw);
-}
+import { diskFileResponse } from '$lib/server/files/disk_file';
 
 export const GET: RequestHandler = async ({ params, locals, url }) => {
 	if (!locals.user) throw error(401, 'Sign in required.');
@@ -54,7 +47,7 @@ export const GET: RequestHandler = async ({ params, locals, url }) => {
 		try {
 			signed = await getDownloadUrl(row.s3_key, row.original_name, {
 				disposition: inline ? 'inline' : 'attachment',
-				contentType: inline ? row.mime_type : undefined
+				contentType: row.mime_type
 			});
 		} catch (e) {
 			throw error(502, e instanceof Error ? e.message : 'Could not generate download URL.');
@@ -66,21 +59,13 @@ export const GET: RequestHandler = async ({ params, locals, url }) => {
 
 	// Legacy local-FS storage (pre-migration uploads)
 	if (row.storage_path) {
-		const absolute = join(uploadsRoot(), row.storage_path);
-		try {
-			const stat = statSync(absolute);
-			const stream = createReadStream(absolute);
-			return new Response(stream as unknown as ReadableStream, {
-				headers: {
-					'Content-Type': row.mime_type ?? 'application/octet-stream',
-					'Content-Length': String(stat.size),
-					'Content-Disposition': `${inline ? 'inline' : 'attachment'}; filename="${encodeURIComponent(row.original_name)}"`,
-					'Cache-Control': 'private, no-store'
-				}
-			});
-		} catch {
-			throw error(404, 'File missing on disk.');
-		}
+		const response = diskFileResponse(
+			row.storage_path,
+			{ fileName: row.original_name, contentType: row.mime_type },
+			inline ? 'inline' : 'attachment'
+		);
+		if (!response) throw error(404, 'File missing on disk.');
+		return response;
 	}
 
 	throw error(500, 'Document has no storage backend.');

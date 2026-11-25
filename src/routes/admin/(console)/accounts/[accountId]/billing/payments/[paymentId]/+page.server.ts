@@ -4,6 +4,7 @@ import { workspace } from '$lib/server/admin/workspace';
 import { accountContracts, PAYMENT_FIELDS } from '$lib/server/admin/billing';
 import { sfdcQuery } from '$lib/server/salesforce/client';
 import { salesforceUrl, stripeUrl } from '$lib/server/admin/links';
+import { soqlString } from '$lib/server/salesforce/soql';
 
 interface SfPayment {
 	Id: string; Name: string; Amount__c: number | null; Total_Paid__c: number | null; Status__c: string | null; Payment_Type__c: string | null;
@@ -22,7 +23,7 @@ export const load: PageServerLoad = async (event) => {
 
 	let sf: SfPayment | null = null;
 	if (p.sfId) {
-		try { sf = (await sfdcQuery<SfPayment>(`SELECT ${PAYMENT_FIELDS} FROM Payment__c WHERE Id = '${p.sfId.replace(/'/g, '')}' LIMIT 1`)).records[0] ?? null; } catch { sf = null; }
+		try { sf = (await sfdcQuery<SfPayment>(`SELECT ${PAYMENT_FIELDS} FROM Payment__c WHERE Id = ${soqlString(p.sfId)} LIMIT 1`)).records[0] ?? null; } catch { sf = null; }
 	}
 	const money = (n: number | null | undefined) => (n == null ? '—' : `$${Number(n).toFixed(2)}`);
 	const ts = (s: string | null | undefined) => (s ? s.replace('T', ' ').slice(0, 19) + ' UTC' : '—');

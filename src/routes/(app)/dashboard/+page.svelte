@@ -85,7 +85,7 @@
 				{/if}
 			</div>
 		</a>
-		<a class="stat-card" href="/issues?filter=waiting">
+		<a class="stat-card" href="/issues?status=waiting">
 			<div class="stat-label">Action Required</div>
 			<div class="stat-value" class:warn={data.stats.pendingFiles > 0}>{data.stats.pendingFiles}</div>
 			<div class="stat-sub">

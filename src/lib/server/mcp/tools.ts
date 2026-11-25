@@ -22,6 +22,7 @@ import {
 import { hashRequest, withIdempotency } from '../integrations/idempotency';
 import { requireIntegrationRequiredFile, requireIntegrationStoreRequiredFile, getUserSfdcContactId } from '../integrations/resources';
 import { validateUpload, storeRequiredFileUpload, MAX_UPLOAD_BYTES } from '../files/required_file_upload';
+import { findSlotFile, presignSlotFile } from '../files/required_file_download';
 import { sanitizeMessageHtml, htmlToText } from '../sanitize';
 import { storeJson, caseSummaryJson, caseDetailJson, messageJson, requiredFileJson } from '../integrations/serializers';
 import { listCasesForStore, fetchCase, listCaseMessages, listRequiredFilesForCase, listRequiredFilesForStore, createCaseMessage } from '../salesforce';
@@ -38,8 +39,11 @@ export interface McpTool {
 	/** MCP tool annotations — clients use them to decide when to ask the user to approve a call. */
 	annotations: { readOnlyHint: boolean; destructiveHint?: boolean; idempotentHint?: boolean; openWorldHint?: boolean };
 	inputSchema: { type: 'object'; properties: Record<string, unknown>; required?: string[]; additionalProperties: false };
-	run(p: IntegrationPrincipal, args: Args): Promise<unknown>;
+	run(p: IntegrationPrincipal, args: Args, audit?: McpAudit): Promise<unknown>;
 }
+
+/** What a tool may add to the call's audit event. Identifiers only — never URLs or file contents. */
+export interface McpAudit { resourceType?: string; resourceId?: string; metadata?: Record<string, unknown> }
 
 const str = (a: Args, k: string): string => {
 	const v = a[k];
@@ -211,6 +215,47 @@ export const TOOLS: McpTool[] = [
 		}
 	}
 	,
+	{
+		name: 'get_download_link', permission: 'files.download', annotations: READ,
+		description:
+			'Get a link to download ONE file of a required-file slot: the uploaded file (default) or the example file. Pass caseId for a case slot, or omit it for a store-level slot. ' +
+			'Returns url, fileName, contentType and expiresAt (links expire after a few minutes — get a new one if needed). Give the customer the url as a link; do not repeat it as plain text. ' +
+			'When requiresSignIn is true the link opens only for someone signed in to the web app.',
+		inputSchema: {
+			type: 'object',
+			properties: {
+				storeId: ID,
+				caseId: { ...ID, description: 'Optional. Omit for a store-level slot.' },
+				requiredFileId: { ...ID, description: 'Slot id from list_required_files.' },
+				file: { type: 'string', enum: ['upload', 'example'], description: 'Which file. Default upload.' }
+			},
+			required: ['storeId', 'requiredFileId'], additionalProperties: false
+		},
+		async run(p, a, audit) {
+			const kind = a.file ?? 'upload';
+			if (kind !== 'upload' && kind !== 'example') throw new ApiError(422, 'VALIDATION_ERROR', 'file must be "upload" or "example".');
+			const storeId = requireUuid(str(a, 'storeId'), 'Store');
+			const slotId = requireSfId(str(a, 'requiredFileId'), 'Required file');
+			const caseId = a.caseId === undefined ? undefined : requireSfId(str(a, 'caseId'), 'Case');
+			if (audit) Object.assign(audit, { resourceType: 'required_file', resourceId: slotId, metadata: { storeId, file: kind, ...(caseId ? { caseId } : {}) } });
+
+			const store = await requireIntegrationStore(p.accountId, storeId);
+			if (caseId) await requireIntegrationCase(store, caseId, p.accountId);
+			const slot = caseId ? await requireIntegrationRequiredFile(caseId, slotId) : await requireIntegrationStoreRequiredFile(store, slotId);
+			const file = await findSlotFile({ storeId: store.id, caseId, slot }, kind);
+			if (audit) audit.metadata = { ...audit.metadata, fileName: file.fileName, storage: file.source };
+			const info = { fileName: file.fileName, contentType: file.contentType };
+
+			if (file.source === 'disk') {
+				// Legacy files on the server's disk cannot be presigned: link to the signed-in web download.
+				const origin = (env.ORIGIN || '').replace(/\/$/, '');
+				if (!/^https:\/\//.test(origin)) throw new ApiError(503, 'NOT_CONFIGURED', 'This file cannot be linked right now (the public address is not configured).');
+				return { url: `${origin}/api/stores/${store.id}/documents/${file.documentId}`, ...info, expiresAt: null, requiresSignIn: true };
+			}
+			const { url, expiresAt } = await presignSlotFile(file, 'attachment', { accountId: p.accountId, requiredFileId: slot.id });
+			return { url, ...info, expiresAt: expiresAt.toISOString() };
+		}
+	},
 	{
 		name: 'upload_file', permission: 'files.upload',
 		annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },

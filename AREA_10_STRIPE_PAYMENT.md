@@ -30,7 +30,7 @@ The checkout is a **server-priced** embedded flow. The browser never dictates th
 4. **Payment Element confirms.** The page mounts the embedded Stripe **Payment Element** with that `clientSecret` and calls `stripe.confirmPayment({ elements, confirmParams: { return_url: '{BASE_URL}/checkout/success' } })`. On success Stripe redirects the browser to `/checkout/success`; on error the flow stays on the page and surfaces `result.error.message`.
 5. **Reconciliation on the success page.** `/checkout/success` retrieves the PaymentIntent by id, and **only if `pi.status === 'succeeded'`** idempotently UPSERTs a local `service_contracts` row (keyed on `stripe_payment_intent_id`) + line items, then pushes a Salesforce **ServiceContract** + **ContractLineItems** (+ best-effort Cases). Term is **3 months**.
 
-> ⚠️ **Known reconciliation risk — no webhook.** There is **no** `/api/stripe/webhook` handler yet. A successful payment is reconciled into local/SF records **only** when the browser actually lands on `/checkout/success`. If the customer closes the tab (or loses network) after Stripe captures but before the redirect resolves, Stripe has the money but **no local or SF contract may exist**. This is exercised explicitly in **TC-STRIPE-42** and must be tracked as a defect / covered by a reconciliation plan.
+> **Reconciliation without the browser.** `/api/stripe/webhook` (`payment_intent.succeeded`, `checkout.session.completed`, `checkout.session.async_payment_succeeded`) stores the purchase if `/checkout/success` never runs. Both use [`checkout/fulfillment.ts`](src/lib/server/checkout/fulfillment.ts) and create each contract once. See **TC-STRIPE-42** and `SETUP.md` → *Stripe webhook*.
 
 ---
 
@@ -269,15 +269,16 @@ The checkout is a **server-priced** embedded flow. The browser never dictates th
 2. Check `service_contracts` for that `stripe_payment_intent_id` and the SF ServiceContract.
 **Expected:** Exactly **one** local `service_contracts` row and **one** SF ServiceContract exist. On the reloads `hasLocalContract` returns true, so the page shows **"Service Contract was already on file (idempotent confirm)."** No duplicate line items or SF records are created.
 
-### TC-STRIPE-42 (P1) ⛔ (known risk — no webhook) — Tab closed before redirect lands
-**Purpose:** verify/expose the no-webhook reconciliation gap.
-**Preconditions:** signed-in user on `/checkout/payment`; ability to kill the browser tab mid-redirect (throttle network or close immediately after Stripe captures).
+### TC-STRIPE-42 (P1) ⛔ — Tab closed before redirect lands
+**Purpose:** verify the webhook stores a purchase when the success page never runs.
+**Preconditions:** signed-in user on `/checkout/payment`; the environment's Stripe webhook enabled with the events in `SETUP.md`; ability to close the tab mid-redirect.
 **Steps:**
 1. Pay with a success card so Stripe captures the payment.
-2. **Close the tab BEFORE** the `/checkout/success` redirect finishes loading (do not let the success loader run).
-3. In the Stripe dashboard, confirm the PaymentIntent shows **succeeded**.
-4. Query the local DB (`service_contracts` by `stripe_payment_intent_id`) and Salesforce for a matching contract.
-**Expected (documented gap):** Stripe holds a **succeeded** payment, but **no** local `service_contracts` row and **no** SF ServiceContract may exist, because reconciliation runs only on the success page and there is no webhook. **Log this as a defect / confirm the reconciliation plan** (e.g. build `/api/stripe/webhook`).
+2. **Close the tab BEFORE** the `/checkout/success` redirect finishes loading.
+3. In the Stripe dashboard, confirm the PaymentIntent **succeeded** and the webhook delivery returned `200`.
+4. Query the local DB (`service_contracts` by `stripe_payment_intent_id`) and Salesforce.
+5. Open the success URL for that PaymentIntent, and resend the event from the dashboard.
+**Expected:** exactly one `service_contracts` row and one SF ServiceContract (with its line items and payment records) after step 3. Step 5 creates nothing new.
 
 ### TC-STRIPE-43 (P2) 🔁 — SF sync failure leaves local contract with sync-error badge
 **Purpose:** verify a Salesforce failure on the success page does not lose the local record.

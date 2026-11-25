@@ -12,6 +12,7 @@
  *     were linked manually) without ever overwriting a value already there.
  */
 import { sfdcQuery } from './client';
+import { isSalesforceId, soqlString } from './soql';
 
 export const VUID_FIELD = 'appealsdoctor_vuid__c';
 
@@ -25,9 +26,9 @@ export async function isVuidBlank(
 	objectName: 'Account' | 'Contact' | 'Store__c' | string,
 	sfdcId: string
 ): Promise<boolean> {
+	if (!isSalesforceId(sfdcId)) return false;
 	try {
-		const escaped = sfdcId.replace(/'/g, "''");
-		const soql = `SELECT ${VUID_FIELD} FROM ${objectName} WHERE Id = '${escaped}' LIMIT 1`;
+		const soql = `SELECT ${VUID_FIELD} FROM ${objectName} WHERE Id = ${soqlString(sfdcId)} LIMIT 1`;
 		const result = await sfdcQuery<Record<string, unknown>>(soql);
 		const row = result.records[0];
 		if (!row) return false;
