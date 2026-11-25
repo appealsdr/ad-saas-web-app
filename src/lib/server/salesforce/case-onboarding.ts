@@ -12,6 +12,7 @@
 import { sfdcQuery, sfdcFetch, sobjectUpdate, SalesforceApiError } from './client';
 import { getSalesforceConfig } from './config';
 import { logError } from '../error_log';
+import { advanceCaseWhenClientDone } from './case-auto-status';
 import { isSalesforceId, soqlList, soqlString } from './soql';
 
 const CONFIG_FIELD = 'Case_Onboarding__c';
@@ -231,6 +232,7 @@ export async function saveCaseOnboarding(
 	payload[PROVIDED_FIELD] = true;
 	try {
 		await sobjectUpdate('Case', caseId, payload);
+		await advanceCaseWhenClientDone(caseId, context);
 		return { ok: true };
 	} catch (e) {
 		const errorMessage = e instanceof Error ? e.message : String(e);

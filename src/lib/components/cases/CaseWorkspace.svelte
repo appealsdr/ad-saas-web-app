@@ -46,6 +46,7 @@
 		'open': 'badge-orange',
 		'working': 'badge-blue',
 		'in progress': 'badge-blue',
+		'in progress - tech': 'badge-blue',
 		'waiting on client': 'badge-red',
 		'waiting': 'badge-red',
 		'pending': 'badge-red',
