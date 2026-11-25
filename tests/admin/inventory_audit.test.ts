@@ -93,7 +93,14 @@ describe('migrations', () => {
 	it('are numbered contiguously and the new ones are additive (no destructive statements)', () => {
 		const dir = join(__dirname, '..', '..', 'db', 'migrations');
 		const files = readdirSync(dir).filter((f) => f.endsWith('.sql')).sort();
-		files.forEach((f, i) => expect(Number(f.slice(0, 3)), f).toBe(i + 1));
+		// Numbers taken by branches that have not merged yet: skipped while absent, so no two branches reuse one.
+		const reserved = [44, 45];
+		let next = 1;
+		for (const f of files) {
+			const n = Number(f.slice(0, 3));
+			while (next < n && reserved.includes(next)) next++;
+			expect(n, f).toBe(next++);
+		}
 		for (const f of files.filter((f) => /^02[34]_/.test(f))) {
 			const sqlText = readFileSync(join(dir, f), 'utf8').replace(/--.*$/gm, '');
 			expect(sqlText, f).not.toMatch(/\bDROP\s+(TABLE|COLUMN|SCHEMA)\b|^\s*TRUNCATE\b|\bDELETE\s+FROM\b/im);

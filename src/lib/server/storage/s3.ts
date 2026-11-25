@@ -28,8 +28,9 @@ import {
 	type S3ClientConfig
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
+import { contentDisposition, resolveContentType, safeDisposition } from '../files/content_headers';
 
-const DOWNLOAD_URL_TTL_SECONDS = 5 * 60;
+export const DOWNLOAD_URL_TTL_SECONDS = 5 * 60;
 
 let cachedClient: S3Client | null = null;
 
@@ -140,26 +141,22 @@ export async function putObject(
 }
 
 /**
- * Presigned URL the browser can fetch directly from S3. Honors `filename`
- * by setting Content-Disposition so the file downloads with the original name.
+ * Presigned URL the browser can fetch directly from S3. S3 is told which Content-Type and Content-Disposition to
+ * answer with, so a missing or wrong stored type does not matter. `inline` is honoured only for types that are safe
+ * to render (see files/content_headers); anything else downloads.
  */
 export async function getDownloadUrl(
 	key: string,
 	filename?: string,
 	opts: { disposition?: 'attachment' | 'inline'; contentType?: string | null } = {}
 ): Promise<string> {
-	const disposition = opts.disposition ?? 'attachment';
+	const name = filename || key.split('/').pop() || 'file';
+	const contentType = resolveContentType(opts.contentType, name);
 	const cmd = new GetObjectCommand({
 		Bucket: getBucketName(),
 		Key: key,
-		ResponseContentDisposition: filename
-			? `${disposition}; filename="${encodeURIComponent(filename)}"`
-			: disposition === 'inline'
-				? 'inline'
-				: undefined,
-		// Force the right type so the browser renders inline previews correctly
-		// even when the stored object's Content-Type is missing or wrong.
-		ResponseContentType: opts.contentType ?? undefined
+		ResponseContentDisposition: contentDisposition(safeDisposition(opts.disposition, contentType), name),
+		ResponseContentType: contentType
 	});
 	return getSignedUrl(getClient(), cmd, { expiresIn: DOWNLOAD_URL_TTL_SECONDS });
 }

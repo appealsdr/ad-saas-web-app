@@ -34,7 +34,7 @@ export const GET: RequestHandler = async ({ params, locals, url }) => {
 	try {
 		signed = await getDownloadUrl(row.s3_key, row.original_name, {
 			disposition: inline ? 'inline' : 'attachment',
-			contentType: inline ? row.mime_type : undefined
+			contentType: row.mime_type
 		});
 	} catch (e) {
 		throw error(502, e instanceof Error ? e.message : 'Could not generate download URL.');

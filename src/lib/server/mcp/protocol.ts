@@ -5,7 +5,7 @@
  */
 import { ApiError } from '../integrations/errors';
 import type { IntegrationPrincipal } from '../integrations/auth';
-import { TOOLS, type McpTool } from './tools';
+import { TOOLS, type McpAudit, type McpTool } from './tools';
 
 export const SUPPORTED_PROTOCOLS = ['2025-06-18', '2025-03-26', '2024-11-05'] as const;
 export const MAX_RESULT_CHARS = 60_000;
@@ -57,7 +57,7 @@ export function toolResult(value: unknown, isError = false) {
 }
 
 /** Returns the JSON-RPC response object, or null for notifications. `audit.tool` is filled in for the caller's audit event. */
-export async function handleRpc(msg: RpcRequest, p: IntegrationPrincipal, audit: { tool?: string; permission?: string; errorCode?: string }): Promise<object | null> {
+export async function handleRpc(msg: RpcRequest, p: IntegrationPrincipal, audit: { tool?: string; permission?: string; errorCode?: string } & McpAudit): Promise<object | null> {
 	if (msg.id === undefined) return null; // notification (e.g. notifications/initialized)
 	const id = msg.id;
 	switch (msg.method) {
@@ -93,7 +93,7 @@ export async function handleRpc(msg: RpcRequest, p: IntegrationPrincipal, audit:
 			const extra = Object.keys(args).find((k) => !allowed.includes(k));
 			if (extra) return { jsonrpc: '2.0', id, result: toolResult({ error: { code: 'VALIDATION_ERROR', message: `Unknown argument: ${extra.slice(0, 40)}` } }, true) };
 			try {
-				return { jsonrpc: '2.0', id, result: toolResult(await tool.run(p, args as Record<string, unknown>)) };
+				return { jsonrpc: '2.0', id, result: toolResult(await tool.run(p, args as Record<string, unknown>, audit)) };
 			} catch (e) {
 				if (e instanceof ApiError) {
 					audit.errorCode = e.code;

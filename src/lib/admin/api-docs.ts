@@ -205,6 +205,50 @@ export const ENDPOINTS: EndpointDoc[] = [
 		status: '201 Created',
 		responseExample: `{ "data": { "id": "0b6d7f0a-1c1e-4b8e-8c52-5a4f0c2e9d10", "requiredFileId": "a0YHn00000LmNoPQAV", "fileName": "id-proof.pdf", "contentType": "application/pdf", "sizeBytes": 183422 }, "salesforceSynced": true }`,
 		errors: [['404', 'Store or required file not found'], ['409', 'SLOT_ALREADY_UPLOADED'], ['413', 'File larger than 25 MB'], ['415', 'File type not allowed'], ['422', 'Validation error']]
+	},
+	{
+		permission: 'files.download', group: 'Files', method: 'GET', path: '/api/v1/stores/{storeId}/cases/{caseId}/required-files/{requiredFileId}/file', title: 'Download the uploaded file of a case required-file slot',
+		means: 'Fetches the file currently uploaded into a case slot.',
+		youGet: 'A redirect (HTTP 302) whose Location is a temporary download link, valid for 5 minutes. The file arrives with its content type and original name.',
+		query: [{ name: 'disposition', type: 'inline', note: 'Optional. Asks to display the file instead of downloading it; honoured only for PDF, images and plain text.' }],
+		requestExample: `curl -L -o downloaded-file "$BASE/api/v1/stores/$STORE/cases/$CASE/required-files/$SLOT/file" \\\n  -H "Authorization: Bearer $KEY"`,
+		status: '302 Found',
+		responseExample: `HTTP/1.1 302 Found\nLocation: https://<storage-host>/<temporary signed link>`,
+		notes: ['curl -L follows the redirect. Do not send your API key to the storage link, and do not store or share the link.', 'Older files kept on our server are returned directly (HTTP 200) with the same headers.'],
+		errors: [['404', 'Store, case or required file not found, or the slot has no uploaded file (FILE_NOT_FOUND)']]
+	},
+	{
+		permission: 'files.download', group: 'Files', method: 'GET', path: '/api/v1/stores/{storeId}/cases/{caseId}/required-files/{requiredFileId}/example', title: 'Download the example file of a case required-file slot',
+		means: 'Fetches the example file we provide for a case slot.',
+		youGet: 'A redirect (HTTP 302) whose Location is a temporary download link, valid for 5 minutes. The file arrives with its content type and original name.',
+		query: [{ name: 'disposition', type: 'inline', note: 'Optional. Asks to display the file instead of downloading it; honoured only for PDF, images and plain text.' }],
+		requestExample: `curl -L -o downloaded-file "$BASE/api/v1/stores/$STORE/cases/$CASE/required-files/$SLOT/example" \\\n  -H "Authorization: Bearer $KEY"`,
+		status: '302 Found',
+		responseExample: `HTTP/1.1 302 Found\nLocation: https://<storage-host>/<temporary signed link>`,
+		notes: ['curl -L follows the redirect. Do not send your API key to the storage link, and do not store or share the link.', 'Older files kept on our server are returned directly (HTTP 200) with the same headers.'],
+		errors: [['404', 'Store, case or required file not found, or the slot has no example file (FILE_NOT_FOUND)']]
+	},
+	{
+		permission: 'files.download', group: 'Files', method: 'GET', path: '/api/v1/stores/{storeId}/required-files/{requiredFileId}/file', title: 'Download the uploaded file of a store-level required-file slot',
+		means: 'Fetches the file currently uploaded into a store-level slot.',
+		youGet: 'A redirect (HTTP 302) whose Location is a temporary download link, valid for 5 minutes. The file arrives with its content type and original name.',
+		query: [{ name: 'disposition', type: 'inline', note: 'Optional. Asks to display the file instead of downloading it; honoured only for PDF, images and plain text.' }],
+		requestExample: `curl -L -o downloaded-file "$BASE/api/v1/stores/$STORE/required-files/$SLOT/file" \\\n  -H "Authorization: Bearer $KEY"`,
+		status: '302 Found',
+		responseExample: `HTTP/1.1 302 Found\nLocation: https://<storage-host>/<temporary signed link>`,
+		notes: ['curl -L follows the redirect. Do not send your API key to the storage link, and do not store or share the link.', 'Older files kept on our server are returned directly (HTTP 200) with the same headers.'],
+		errors: [['404', 'Store or required file not found, or the slot has no uploaded file (FILE_NOT_FOUND)']]
+	},
+	{
+		permission: 'files.download', group: 'Files', method: 'GET', path: '/api/v1/stores/{storeId}/required-files/{requiredFileId}/example', title: 'Download the example file of a store-level required-file slot',
+		means: 'Fetches the example file we provide for a store-level slot.',
+		youGet: 'A redirect (HTTP 302) whose Location is a temporary download link, valid for 5 minutes. The file arrives with its content type and original name.',
+		query: [{ name: 'disposition', type: 'inline', note: 'Optional. Asks to display the file instead of downloading it; honoured only for PDF, images and plain text.' }],
+		requestExample: `curl -L -o downloaded-file "$BASE/api/v1/stores/$STORE/required-files/$SLOT/example" \\\n  -H "Authorization: Bearer $KEY"`,
+		status: '302 Found',
+		responseExample: `HTTP/1.1 302 Found\nLocation: https://<storage-host>/<temporary signed link>`,
+		notes: ['curl -L follows the redirect. Do not send your API key to the storage link, and do not store or share the link.', 'Older files kept on our server are returned directly (HTTP 200) with the same headers.'],
+		errors: [['404', 'Store or required file not found, or the slot has no example file (FILE_NOT_FOUND)']]
 	}
 ];
 

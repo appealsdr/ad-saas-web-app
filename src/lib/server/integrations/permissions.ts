@@ -16,7 +16,8 @@ export type IntegrationPermission =
 	| 'messages.list'
 	| 'messages.create'
 	| 'files.requirements.read'
-	| 'files.upload';
+	| 'files.upload'
+	| 'files.download';
 
 export const INTEGRATION_PERMISSIONS: readonly IntegrationPermission[] = [
 	'stores.list',
@@ -29,7 +30,8 @@ export const INTEGRATION_PERMISSIONS: readonly IntegrationPermission[] = [
 	'messages.list',
 	'messages.create',
 	'files.requirements.read',
-	'files.upload'
+	'files.upload',
+	'files.download'
 ] as const;
 
 export const PERMISSION_LABELS: Record<IntegrationPermission, string> = {
@@ -43,7 +45,8 @@ export const PERMISSION_LABELS: Record<IntegrationPermission, string> = {
 	'messages.list': 'Read case messages/comments',
 	'messages.create': 'Create a case message/comment',
 	'files.requirements.read': 'Read required-file instructions and status',
-	'files.upload': 'Upload files into a required-file slot'
+	'files.upload': 'Upload files into a required-file slot',
+	'files.download': 'Download uploaded and example files of required-file slots'
 };
 
 export function isIntegrationPermission(v: unknown): v is IntegrationPermission {
