@@ -13,6 +13,7 @@ import type { PageServerLoad } from './$types';
 import { sql } from '$lib/server/db';
 import { sfdcQuery } from '$lib/server/salesforce';
 import { logError } from '$lib/server/error_log';
+import { isSalesforceId, soqlList, soqlString } from '$lib/server/salesforce/soql';
 
 interface ContractRow {
 	id: string;
@@ -43,7 +44,7 @@ interface LineRow {
 async function fetchSfContractNames(sfdcContractIds: string[]): Promise<Map<string, string>> {
 	const out = new Map<string, string>();
 	for (let i = 0; i < sfdcContractIds.length; i += 150) {
-		const ids = sfdcContractIds.slice(i, i + 150).map((id) => `'${id.replace(/'/g, '')}'`).join(',');
+		const ids = soqlList(sfdcContractIds.slice(i, i + 150));
 		const res = await sfdcQuery<{ Id: string; Name: string | null }>(`SELECT Id, Name FROM ServiceContract WHERE Id IN (${ids})`, { paginate: true });
 		for (const r of res.records) if (r.Name) out.set(r.Id, r.Name);
 	}
@@ -89,7 +90,7 @@ function mapStatus(s: string | null, isBalance = false): PayStatus {
 async function fetchSfPayments(sfdcContractIds: string[]): Promise<SfPayment[]> {
 	const out: SfPayment[] = [];
 	for (let i = 0; i < sfdcContractIds.length; i += 150) {
-		const ids = sfdcContractIds.slice(i, i + 150).map((id) => `'${id.replace(/'/g, '')}'`).join(',');
+		const ids = soqlList(sfdcContractIds.slice(i, i + 150));
 		const res = await sfdcQuery<SfPayment>(
 			`SELECT Id, Name, Amount__c, Status__c, Payment_Type__c, PaidAt__c, Payment_Date__c, Description__c, CreatedDate,
 			        Stripe_Payment_Intent_Id__c, Service_Contract__c, Contract_Line_Item__c
@@ -266,18 +267,18 @@ function shapeContract(r: ContractRow, lines: LineRow[], sfName: string | null) 
 /** ServiceContracts of the linked Salesforce Account that have no local mirror row, shaped like local ones. */
 async function loadSalesforceOnlyContracts(sfdcAccountId: string | null, known: Set<string>): Promise<{ rows: ContractRow[]; lines: LineRow[] }> {
 	const none = { rows: [] as ContractRow[], lines: [] as LineRow[] };
-	if (!sfdcAccountId || !/^[a-zA-Z0-9]{15,18}$/.test(sfdcAccountId)) return none;
+	if (!sfdcAccountId || !isSalesforceId(sfdcAccountId)) return none;
 	try {
 		type C = { Id: string; StartDate: string | null; EndDate: string | null; CreatedDate: string; Store__r?: { Name: string } | null };
 		let cs: C[];
 		try {
-			cs = (await sfdcQuery<C>(`SELECT Id, StartDate, EndDate, CreatedDate, Store__r.Name FROM ServiceContract WHERE AccountId = '${sfdcAccountId}' ORDER BY CreatedDate DESC LIMIT 200`, { paginate: true })).records;
+			cs = (await sfdcQuery<C>(`SELECT Id, StartDate, EndDate, CreatedDate, Store__r.Name FROM ServiceContract WHERE AccountId = ${soqlString(sfdcAccountId)} ORDER BY CreatedDate DESC LIMIT 200`, { paginate: true })).records;
 		} catch {
-			cs = (await sfdcQuery<C>(`SELECT Id, StartDate, EndDate, CreatedDate FROM ServiceContract WHERE AccountId = '${sfdcAccountId}' ORDER BY CreatedDate DESC LIMIT 200`, { paginate: true })).records;
+			cs = (await sfdcQuery<C>(`SELECT Id, StartDate, EndDate, CreatedDate FROM ServiceContract WHERE AccountId = ${soqlString(sfdcAccountId)} ORDER BY CreatedDate DESC LIMIT 200`, { paginate: true })).records;
 		}
 		cs = cs.filter((c) => !known.has(c.Id));
 		if (!cs.length) return none;
-		const inList = cs.map((c) => `'${c.Id}'`).join(',');
+		const inList = soqlList(cs.map((c) => c.Id));
 		type L = { ServiceContractId: string; Quantity: number | null; UnitPrice: number | null; Description: string | null; PricebookEntry?: { Product2?: { Name: string } | null } | null };
 		const ls = (await sfdcQuery<L>(`SELECT ServiceContractId, Quantity, UnitPrice, Description, PricebookEntry.Product2.Name FROM ContractLineItem WHERE ServiceContractId IN (${inList}) ORDER BY CreatedDate ASC`, { paginate: true })).records;
 		const rows: ContractRow[] = cs.map((c) => {

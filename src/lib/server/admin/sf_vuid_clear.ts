@@ -12,6 +12,7 @@
 import { sfdcQuery, sobjectUpdate } from '../salesforce/client';
 import { VUID_FIELD } from '../salesforce/vuid';
 import { describeError, logError } from '../error_log';
+import { isSalesforceId, soqlList, soqlString } from '../salesforce/soql';
 
 export type VuidObject = 'Account' | 'Contact' | 'Store__c' | 'ServiceContract';
 
@@ -32,9 +33,6 @@ export interface VuidClearResult {
 	byObject: Record<string, number>;
 }
 
-const SF_ID = /^[a-zA-Z0-9]{15,18}$/;
-const esc = (v: string) => v.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
-const inList = (ids: string[]) => ids.map((i) => `'${esc(i)}'`).join(',');
 const chunk = <T>(a: T[], n: number): T[][] => Array.from({ length: Math.ceil(a.length / n) }, (_, i) => a.slice(i * n, i * n + n));
 const missingField = (msg: string) => /INVALID_FIELD|No such column|INVALID_TYPE|sObject type/i.test(msg);
 
@@ -48,9 +46,9 @@ const ACCOUNT_LOOKUP: Record<VuidObject, string | null> = {
 async function discover(object: VuidObject, t: VuidTargets, ids: Set<string>, result: VuidClearResult): Promise<boolean> {
 	const clauses: string[] = [];
 	const local = [...new Set(t.localIds[object])];
-	for (const part of chunk(local, 100)) clauses.push(`${VUID_FIELD} IN (${inList(part)})`);
+	for (const part of chunk(local, 100)) clauses.push(`${VUID_FIELD} IN (${soqlList(part)})`);
 	const lookup = ACCOUNT_LOOKUP[object];
-	if (lookup && t.sfdcAccountId && SF_ID.test(t.sfdcAccountId)) clauses.push(`(${lookup} = '${esc(t.sfdcAccountId)}' AND ${VUID_FIELD} != null)`);
+	if (lookup && t.sfdcAccountId && isSalesforceId(t.sfdcAccountId)) clauses.push(`(${lookup} = ${soqlString(t.sfdcAccountId)} AND ${VUID_FIELD} != null)`);
 	for (const c of clauses) {
 		try {
 			const r = await sfdcQuery<{ Id: string }>(`SELECT Id FROM ${object} WHERE ${c}`, { paginate: true });
@@ -73,7 +71,7 @@ export async function clearSalesforceVuids(t: VuidTargets): Promise<VuidClearRes
 	if (!t.sfdcAccountId && objects.every((o) => !t.known[o].length)) return result;
 
 	for (const object of objects) {
-		const ids = new Set(t.known[object].filter((i) => SF_ID.test(i)));
+		const ids = new Set(t.known[object].filter(isSalesforceId));
 		const fieldExists = await discover(object, t, ids, result);
 		if (!fieldExists) continue;
 		for (const id of ids) {

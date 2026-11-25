@@ -30,6 +30,7 @@ import {
 	type AppMessageContextType,
 	type AppMessageWithContext
 } from '$lib/types/app-message';
+import { isSalesforceId, soqlList, soqlString } from './soql';
 
 export const APP_MESSAGE_OBJECT = 'Case_Message__c';
 
@@ -62,10 +63,7 @@ export type AppMessageResult<T> = ({ ok: true } & T) | { ok: false; error: strin
 
 // ─── Validation helpers (pure — exported for tests) ─────────────────────
 
-/** 15- or 18-char alphanumeric Salesforce record Id. Safe to inline in SOQL. */
-export function isValidSalesforceId(id: unknown): id is string {
-	return typeof id === 'string' && /^[a-zA-Z0-9]{15}(?:[a-zA-Z0-9]{3})?$/.test(id);
-}
+export { isSalesforceId as isValidSalesforceId };
 
 export function isAppMessageContextType(value: unknown): value is AppMessageContextType {
 	return typeof value === 'string' && (APP_MESSAGE_CONTEXT_TYPES as readonly string[]).includes(value);
@@ -90,7 +88,7 @@ export function validateAppMessageContext(
 		return { ok: false, error: 'Unsupported message context type.' };
 	}
 	if (!contextId) return { ok: false, error: 'Missing message context record.' };
-	if (!isValidSalesforceId(contextId)) return { ok: false, error: 'Invalid message context record.' };
+	if (!isSalesforceId(contextId)) return { ok: false, error: 'Invalid message context record.' };
 	return { ok: true, value: { contextType, contextId } };
 }
 
@@ -165,7 +163,7 @@ export async function listAppMessages(
 	const soql = `
 		SELECT ${BASE_SELECT}
 		FROM ${APP_MESSAGE_OBJECT}
-		WHERE ${contextLookupField(contextType)} = '${contextId}'
+		WHERE ${contextLookupField(contextType)} = ${soqlString(contextId)}
 		ORDER BY CreatedDate ASC
 		LIMIT ${LIST_LIMIT}
 	`.trim();
@@ -195,10 +193,10 @@ export async function listRecentAppMessagesForContexts(
 	}
 	const ids = [...new Set(contextIds)];
 	if (ids.length === 0) return { ok: true, messages: [] };
-	if (!ids.every(isValidSalesforceId)) return { ok: false, error: 'Invalid message context record.' };
+	if (!ids.every(isSalesforceId)) return { ok: false, error: 'Invalid message context record.' };
 	const cleanLimit = Math.max(1, Math.min(ROLLUP_LIMIT_MAX, limit | 0));
 	const field = contextLookupField(contextType);
-	const literals = ids.map((id) => `'${id}'`).join(',');
+	const literals = soqlList(ids);
 	const caseNumber = contextType === 'Case' ? ', Case__r.CaseNumber' : '';
 	const soql = `
 		SELECT ${BASE_SELECT}, ${field}${caseNumber}
@@ -239,10 +237,10 @@ export async function messageBelongsToContext(
 ): Promise<AppMessageResult<{ belongs: boolean }>> {
 	const v = validateAppMessageContext(context);
 	if (!v.ok) return { ok: false, error: v.error };
-	if (!isValidSalesforceId(messageId)) return { ok: false, error: 'Invalid message id.' };
-	const soql = `SELECT Id FROM ${APP_MESSAGE_OBJECT} WHERE Id = '${messageId}' AND ${contextLookupField(
+	if (!isSalesforceId(messageId)) return { ok: false, error: 'Invalid message id.' };
+	const soql = `SELECT Id FROM ${APP_MESSAGE_OBJECT} WHERE Id = ${soqlString(messageId)} AND ${contextLookupField(
 		v.value.contextType
-	)} = '${v.value.contextId}' LIMIT 1`;
+	)} = ${soqlString(v.value.contextId)} LIMIT 1`;
 	try {
 		const result = await sfdcQuery<{ Id: string }>(soql);
 		return { ok: true, belongs: result.records.length > 0 };
@@ -267,14 +265,14 @@ export async function createAppMessage(
 	if (!v.ok) return { ok: false, error: v.error };
 	const { contextType, contextId } = v.value;
 	if (!args.senderContactId) return { ok: false, error: 'Missing sender.' };
-	if (!isValidSalesforceId(args.senderContactId)) return { ok: false, error: 'Invalid sender.' };
+	if (!isSalesforceId(args.senderContactId)) return { ok: false, error: 'Invalid sender.' };
 	if (typeof args.body !== 'string' || !args.body.trim()) {
 		return { ok: false, error: 'Message cannot be empty.' };
 	}
 
 	const replyTo = args.replyToMessageId || null;
 	if (replyTo) {
-		if (!isValidSalesforceId(replyTo)) return { ok: false, error: 'Invalid reply target.' };
+		if (!isSalesforceId(replyTo)) return { ok: false, error: 'Invalid reply target.' };
 		const check = await messageBelongsToContext(replyTo, v.value, reqCtx);
 		if (!check.ok) return { ok: false, error: check.error };
 		if (!check.belongs) {
@@ -324,7 +322,7 @@ export async function markAppMessageRead(
 	scope?: AppMessageContext
 ): Promise<AppMessageResult<unknown>> {
 	if (!messageId) return { ok: false, error: 'Missing message id.' };
-	if (!isValidSalesforceId(messageId)) return { ok: false, error: 'Invalid message id.' };
+	if (!isSalesforceId(messageId)) return { ok: false, error: 'Invalid message id.' };
 	if (scope) {
 		const check = await messageBelongsToContext(messageId, scope, reqCtx);
 		if (!check.ok) return { ok: false, error: check.error };

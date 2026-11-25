@@ -13,6 +13,7 @@ import type { RequestHandler } from './$types';
 import { env } from '$env/dynamic/private';
 import { sfdcQuery, getAccessToken, SalesforceApiError } from '$lib/server/salesforce';
 import { invalidatePricebookCache } from '$lib/server/salesforce/pricebook';
+import { soqlString } from '$lib/server/salesforce/soql';
 
 interface CountRow { ct: number }
 interface Pricebook2Row { Id: string; Name: string; IsActive: boolean; IsStandard: boolean }
@@ -39,14 +40,13 @@ export const GET: RequestHandler = async (event) => {
 	requireStaff(event, 'data.query');
 
 	const name = (url.searchParams.get('name') ?? env.SFDC_PRICE_SERVICE ?? 'SERVICE').trim();
-	const escaped = name.replace(/'/g, "''");
 
 	try {
 		const token = await getAccessToken();
 
 		// 1. Does the pricebook exist?
 		const pricebooks = await sfdcQuery<Pricebook2Row>(
-			`SELECT Id, Name, IsActive, IsStandard FROM Pricebook2 WHERE Name = '${escaped}'`
+			`SELECT Id, Name, IsActive, IsStandard FROM Pricebook2 WHERE Name = ${soqlString(name)}`
 		);
 
 		if (pricebooks.records.length === 0) {
@@ -60,7 +60,7 @@ export const GET: RequestHandler = async (event) => {
 				lookingFor: name,
 				instanceUrl: token.instanceUrl,
 				envVar: env.SFDC_PRICE_SERVICE ?? '(unset — defaulted to SERVICE)',
-				hint: `No Pricebook2 found with Name = '${name}'. Candidates below — pick the right one and set SFDC_PRICE_SERVICE in .env.`,
+				hint: `No Pricebook2 found with name "${name}". Candidates below — pick the right one and set SFDC_PRICE_SERVICE in .env.`,
 				availablePricebooks: candidates.records
 			});
 		}
@@ -69,16 +69,16 @@ export const GET: RequestHandler = async (event) => {
 
 		// 2. Step counts on PricebookEntry
 		const [allEntries] = (await sfdcQuery<CountRow>(
-			`SELECT count(Id) ct FROM PricebookEntry WHERE Pricebook2Id = '${pb.Id}'`
+			`SELECT count(Id) ct FROM PricebookEntry WHERE Pricebook2Id = ${soqlString(pb.Id)}`
 		)).records;
 
 		const [activeEntries] = (await sfdcQuery<CountRow>(
-			`SELECT count(Id) ct FROM PricebookEntry WHERE Pricebook2Id = '${pb.Id}' AND IsActive = true`
+			`SELECT count(Id) ct FROM PricebookEntry WHERE Pricebook2Id = ${soqlString(pb.Id)} AND IsActive = true`
 		)).records;
 
 		const [activeWithActiveProduct] = (await sfdcQuery<CountRow>(
 			`SELECT count(Id) ct FROM PricebookEntry
-			 WHERE Pricebook2Id = '${pb.Id}' AND IsActive = true AND Product2.IsActive = true`
+			 WHERE Pricebook2Id = ${soqlString(pb.Id)} AND IsActive = true AND Product2.IsActive = true`
 		)).records;
 
 		// 3. Pull a few sample rows so we can see what's actually there
@@ -86,7 +86,7 @@ export const GET: RequestHandler = async (event) => {
 			`SELECT Id, UnitPrice, IsActive,
 			        Product2.Id, Product2.Name, Product2.IsActive, Product2.Category__c
 			 FROM PricebookEntry
-			 WHERE Pricebook2Id = '${pb.Id}'
+			 WHERE Pricebook2Id = ${soqlString(pb.Id)}
 			 LIMIT 5`
 		);
 

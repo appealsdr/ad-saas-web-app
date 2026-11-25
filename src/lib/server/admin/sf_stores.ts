@@ -11,8 +11,8 @@ import { updateSalesforceStore } from '../salesforce/stores';
 import { logError, describeError } from '../error_log';
 import { recordAudit, type AuditActor } from './audit';
 import { ActionError, requireReason } from './actions';
+import { isSalesforceId, soqlString } from '../salesforce/soql';
 
-const SF_ID_RE = /^[a-zA-Z0-9]{15}([a-zA-Z0-9]{3})?$/;
 const FIELDS = 'Id, Name, Account__c, Seller_ID__c, Marketplaces__c, Business_Name__c, Seller_Account_Primary_Email__c, Store_Email__c, Country__c, Description__c, CreatedDate';
 
 export interface SfStore {
@@ -31,12 +31,12 @@ export interface SfStoreListing {
 }
 
 async function fetchSfStores(sfdcAccountId: string): Promise<SfStore[]> {
-	const res = await sfdcQuery<SfStore>(`SELECT ${FIELDS} FROM Store__c WHERE Account__c = '${sfdcAccountId}' ORDER BY CreatedDate DESC`, { paginate: true });
+	const res = await sfdcQuery<SfStore>(`SELECT ${FIELDS} FROM Store__c WHERE Account__c = ${soqlString(sfdcAccountId)} ORDER BY CreatedDate DESC`, { paginate: true });
 	return res.records;
 }
 
 export async function listSalesforceStores(accountId: string, sfdcAccountId: string | null): Promise<SfStoreListing> {
-	if (!sfdcAccountId || !SF_ID_RE.test(sfdcAccountId)) return { linked: false, stores: [], alreadyLinked: 0 };
+	if (!sfdcAccountId || !isSalesforceId(sfdcAccountId)) return { linked: false, stores: [], alreadyLinked: 0 };
 	let all: SfStore[];
 	try {
 		all = await fetchSfStores(sfdcAccountId);
@@ -66,7 +66,7 @@ export async function importSalesforceStore(
 	reason: string
 ): Promise<string> {
 	const why = requireReason(reason);
-	if (!SF_ID_RE.test(sfdcStoreId)) throw new ActionError('Invalid Salesforce store id.', 400);
+	if (!isSalesforceId(sfdcStoreId)) throw new ActionError('Invalid Salesforce store id.', 400);
 	const [acc] = await sql<{ sfdc_account_id: string | null }[]>`SELECT sfdc_account_id FROM accounts WHERE id = ${accountId}`;
 	if (!acc) throw new ActionError('Account not found.', 404);
 	if (!acc.sfdc_account_id) throw new ActionError('This account is not linked to a Salesforce account.', 409);
@@ -74,7 +74,7 @@ export async function importSalesforceStore(
 	// Re-read live from Salesforce and require it to belong to THIS account's Salesforce Account.
 	let sf: SfStore | undefined;
 	try {
-		const res = await sfdcQuery<SfStore>(`SELECT ${FIELDS} FROM Store__c WHERE Id = '${sfdcStoreId}' LIMIT 1`);
+		const res = await sfdcQuery<SfStore>(`SELECT ${FIELDS} FROM Store__c WHERE Id = ${soqlString(sfdcStoreId)} LIMIT 1`);
 		sf = res.records[0];
 	} catch (e) {
 		await logError({ source: 'admin.sf_stores', operation: 'import_fetch', accountId, sfdcObject: 'Store__c', errorMessage: e instanceof Error ? e.message : String(e) });

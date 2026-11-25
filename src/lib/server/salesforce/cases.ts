@@ -34,6 +34,7 @@ import {
 } from './app-messages';
 import type { AppMessage, AppMessageWithContext } from '$lib/types/app-message';
 import type { CaseTimelineEvent, CaseTimelineEventType } from '$lib/types/case-timeline';
+import { isSalesforceId, soqlList, soqlString } from './soql';
 export type { CaseTimelineEvent, CaseTimelineEventType } from '$lib/types/case-timeline';
 
 const CASE_STORE_FIELD = 'Store__c'; // Case → Store__c lookup
@@ -114,12 +115,13 @@ export async function listCasesForStores(
 	sfdcStoreIds: string[],
 	context: { userId?: string; accountId?: string } = {}
 ): Promise<{ ok: true; cases: CaseSummaryWithStore[] } | { ok: false; error: string }> {
-	if (sfdcStoreIds.length === 0) return { ok: true, cases: [] };
-	if (sfdcStoreIds.length > 200) {
+	const storeIds = sfdcStoreIds.filter(isSalesforceId);
+	if (storeIds.length === 0) return { ok: true, cases: [] };
+	if (storeIds.length > 200) {
 		// SOQL IN clauses cap somewhere around 500 literals; keep headroom.
 		return { ok: false, error: 'Too many stores for a single query (max 200).' };
 	}
-	const literals = sfdcStoreIds.map((id) => `'${id.replace(/'/g, "''")}'`).join(',');
+	const literals = soqlList(storeIds);
 	const soql = `
 		SELECT Id, CaseNumber, Subject, Status, Priority,
 		       CreatedDate, LastModifiedDate, RecordType.Name,
@@ -167,12 +169,12 @@ export async function listCasesForStore(
 	sfdcStoreId: string,
 	context: { userId?: string; accountId?: string } = {}
 ): Promise<{ ok: true; cases: CaseSummary[] } | { ok: false; error: string }> {
-	const escaped = sfdcStoreId.replace(/'/g, "''");
+	if (!isSalesforceId(sfdcStoreId)) return { ok: true, cases: [] };
 	const soql = `
 		SELECT Id, CaseNumber, Subject, Status, Priority,
 		       CreatedDate, LastModifiedDate, RecordType.Name
 		FROM Case
-		WHERE ${CASE_STORE_FIELD} = '${escaped}'
+		WHERE ${CASE_STORE_FIELD} = ${soqlString(sfdcStoreId)}
 		ORDER BY CreatedDate DESC
 		LIMIT 500
 	`.trim();
@@ -217,12 +219,14 @@ export async function fetchCase(
 		'CreatedDate', 'LastModifiedDate', 'Description', 'Origin',
 		'Type', 'AccountId', 'ContactId', 'OwnerId', 'Estimated_Revenue_at_Risk__c', 'ASIN__c'
 	];
-	const escaped = caseId.replace(/'/g, "''");
+	if (!isSalesforceId(caseId)) {
+		return { ok: false, error: 'Case not found in Salesforce.', notFound: true };
+	}
 	try {
 		// Use SOQL so we can pull RecordType.Name in one trip.
 		const soql = `
 			SELECT ${fields.join(', ')}, RecordType.Name
-			FROM Case WHERE Id = '${escaped}' LIMIT 1
+			FROM Case WHERE Id = ${soqlString(caseId)} LIMIT 1
 		`.trim();
 		const result = await sfdcQuery<CaseDetailRow>(soql);
 		const row = result.records[0];
@@ -307,8 +311,8 @@ export async function findCaseStoreLookup(
 	| { ok: true; sfdcCaseId: string; sfdcStoreId: string | null }
 	| { ok: false; error: string; notFound?: boolean }
 > {
-	const escaped = caseId.replace(/'/g, "''");
-	const soql = `SELECT Id, ${CASE_STORE_FIELD} FROM Case WHERE Id = '${escaped}' LIMIT 1`;
+	if (!isSalesforceId(caseId)) return { ok: false, error: 'Case not found.', notFound: true };
+	const soql = `SELECT Id, ${CASE_STORE_FIELD} FROM Case WHERE Id = ${soqlString(caseId)} LIMIT 1`;
 	try {
 		const result = await sfdcQuery<{ Id: string; Store__c: string | null }>(soql);
 		const row = result.records[0];
@@ -430,9 +434,10 @@ export async function listPendingFilesForCases(
 	| { ok: true; files: PendingCaseFile[]; total: number }
 	| { ok: false; error: string }
 > {
-	if (caseIds.length === 0) return { ok: true, files: [], total: 0 };
+	const ids = caseIds.filter(isSalesforceId);
+	if (ids.length === 0) return { ok: true, files: [], total: 0 };
 	const cleanLimit = Math.max(1, Math.min(50, limit | 0));
-	const literals = caseIds.map((id) => `'${id.replace(/'/g, "''")}'`).join(',');
+	const literals = soqlList(ids);
 	const caseRel = CASE_FILE_FIELDS.case.replace('__c', '__r');
 	// No WHERE filter on Client_File_Info__c — partition client-side instead.
 	const soql = `
@@ -510,11 +515,11 @@ export async function listCaseFiles(
 	caseId: string,
 	context: { userId?: string; accountId?: string } = {}
 ): Promise<{ ok: true; files: CaseFile[] } | { ok: false; error: string }> {
-	const escaped = caseId.replace(/'/g, "''");
+	if (!isSalesforceId(caseId)) return { ok: true, files: [] };
 	const soql = `
 		SELECT Id, Name, ${CASE_FILE_FIELDS.shortDescription}, ${CASE_FILE_FIELDS.clientFileInfo}, CreatedDate
 		FROM ${CASE_FILE_OBJECT}
-		WHERE ${CASE_FILE_FIELDS.case} = '${escaped}'
+		WHERE ${CASE_FILE_FIELDS.case} = ${soqlString(caseId)}
 		ORDER BY Name ASC
 		LIMIT 200
 	`.trim();
@@ -554,11 +559,11 @@ export async function listStoreFiles(
 	sfdcStoreId: string,
 	context: { userId?: string; accountId?: string } = {}
 ): Promise<{ ok: true; files: CaseFile[] } | { ok: false; error: string }> {
-	const escaped = sfdcStoreId.replace(/'/g, "''");
+	if (!isSalesforceId(sfdcStoreId)) return { ok: true, files: [] };
 	const soql = `
 		SELECT Id, Name, ${CASE_FILE_FIELDS.shortDescription}, ${CASE_FILE_FIELDS.clientFileInfo}, CreatedDate
 		FROM ${CASE_FILE_OBJECT}
-		WHERE ${CASE_FILE_FIELDS.store} = '${escaped}'
+		WHERE ${CASE_FILE_FIELDS.store} = ${soqlString(sfdcStoreId)}
 		  AND ${CASE_FILE_FIELDS.case} = null
 		ORDER BY Name ASC
 		LIMIT 200
@@ -744,11 +749,11 @@ export async function listCaseHistory(
 	caseId: string,
 	context: { userId?: string; accountId?: string } = {}
 ): Promise<{ ok: true; history: CaseHistoryEntry[] } | { ok: false; error: string }> {
-	const escaped = caseId.replace(/'/g, "''");
+	if (!isSalesforceId(caseId)) return { ok: true, history: [] };
 	const soql = `
 		SELECT Id, Field, OldValue, NewValue, CreatedDate, CreatedBy.Name
 		FROM CaseHistory
-		WHERE CaseId = '${escaped}'
+		WHERE CaseId = ${soqlString(caseId)}
 		ORDER BY CreatedDate DESC
 		LIMIT 500
 	`.trim();
