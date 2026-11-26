@@ -42,7 +42,7 @@
 	.split-head { flex-shrink: 0; padding: 22px 26px 16px; border-bottom: 1px solid var(--grey-line); }
 	.split {
 		flex: 1; min-height: 0; display: grid;
-		grid-template-columns: minmax(320px, 38%) minmax(0, 1fr);
+		grid-template-columns: minmax(240px, 25%) minmax(0, 1fr);
 		grid-template-rows: minmax(0, 1fr);
 	}
 	.list-pane {
