@@ -59,7 +59,8 @@
 	.list { list-style: none; margin: 0; padding: 0; }
 	li { border-bottom: 1px solid var(--grey-line); }
 	.row {
-		display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 10px;
+		/* Wraps rather than squeezes: the list pane is only a quarter of the screen. */
+		display: flex; flex-wrap: wrap; gap: 2px 10px;
 		padding: 10px 16px; font-size: 13px; color: var(--navy); text-decoration: none;
 		border-left: 3px solid transparent;
 	}
@@ -67,15 +68,15 @@
 	a.row:focus-visible { outline: 2px solid var(--orange); outline-offset: -2px; }
 	.row.selected, a.row.selected:hover { background: var(--orange-lt); border-left-color: var(--orange); }
 	.row.disabled { cursor: default; color: var(--grey-text); }
-	.num { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 600; }
-	.service { font-size: 12px; color: var(--grey-text); text-align: right; overflow-wrap: anywhere; }
+	.num { flex: 0 0 auto; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 600; }
+	.service { flex: 1 1 110px; min-width: 0; font-size: 12px; color: var(--grey-text); text-align: right; overflow-wrap: anywhere; }
 	.subject, .store { min-width: 0; overflow-wrap: anywhere; }
-	.subject { grid-column: 1 / -1; }
+	.subject { flex-basis: 100%; }
 	.subject {
 		font-weight: 500; display: -webkit-box; -webkit-box-orient: vertical;
 		-webkit-line-clamp: 2; line-clamp: 2; overflow: hidden;
 	}
-	.store { align-self: center; font-size: 12px; color: var(--grey-text); }
-	.status { align-self: center; justify-self: end; }
+	.store { flex: 1 1 110px; align-self: center; font-size: 12px; color: var(--grey-text); }
+	.status { align-self: center; margin-left: auto; }
 	.orphan { font-style: italic; }
 </style>
