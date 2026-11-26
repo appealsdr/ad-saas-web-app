@@ -30,9 +30,12 @@ describe('CaseTable', () => {
 
 describe('CaseCompactList', () => {
 	const out = html(CaseCompactList, { cases: rows, selectedId: '500A', hrefFor: (id: string) => `/issues/${id}?view=split` });
-	it('shows case number, subject, store and service only', () => {
-		for (const v of ['00012', 'Listing removed', 'Acme', 'Appeal']) expect(out).toContain(v);
-		for (const v of ['In Progress', 'High', '2026']) expect(out).not.toContain(v);
+	it('shows case number, subject, store, service and status only', () => {
+		for (const v of ['00012', 'Listing removed', 'Acme', 'Appeal', 'In Progress']) expect(out).toContain(v);
+		for (const v of ['High', '2026']) expect(out).not.toContain(v);
+	});
+	it('shows each status as a badge, for unlinked cases too', () => {
+		expect(out.match(/badge badge-orange[^>]*>(<!--[^>]*-->)*In Progress/g)).toHaveLength(2);
 	});
 	it('marks the selection and gives unlinked cases no link', () => {
 		expect(out.match(/aria-current="true"/g)).toHaveLength(1);

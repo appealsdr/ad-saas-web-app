@@ -14,6 +14,7 @@ import { ApiError } from '../integrations/errors';
 import { putObject, deleteObject, getRegion } from '../storage/s3';
 import { caseFileKey, storeFileKey } from '../storage/s3-paths';
 import { attachUploadToRequiredFile, type RequiredFile } from '../salesforce';
+import { advanceCaseWhenClientDone } from '../salesforce/case-auto-status';
 import { logError, describeError } from '../error_log';
 import { scanBuffer, scanRequired } from './virus_scan';
 import { raiseAlert } from '../security/alerts';
@@ -184,6 +185,8 @@ export async function storeRequiredFileUpload(t: UploadTarget, input: UploadInpu
 			},
 			{ userId: t.userId, accountId: t.store.account_id }
 		);
+		// These callers see no "Notify technician" choice, so the last file moves the case by itself.
+		if (t.caseId && sf.ok) await advanceCaseWhenClientDone(t.caseId, { userId: t.userId, accountId: t.store.account_id });
 	}
 	return {
 		id: docId, requiredFileId: t.slot.id, fileName: input.fileName, contentType: mime, sizeBytes: input.bytes.length,

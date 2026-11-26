@@ -12,6 +12,8 @@
  * Actions:
  *   post_message  — INSERT Case_Message__c with ONLY Case__c set (alias: post_comment)
  *   mark_read     — Message_Read__c = now, only for messages of this Case
+ *   notify_technician — "Waiting on Client" → "In Progress - Tech", at the client's request. post_message,
+ *                   upload_doc and save_onboarding return `promptNotify` when everything asked is done.
  *   upload_doc    — for ONE required file slot, one or many files: each is PUT to
  *                   S3 → INSERTed as a local row → registered as an S3_Document__c
  *                   (the newest becomes Required_File__c.Last_Version__c).
@@ -49,6 +51,7 @@ import {
 	markConversationRead
 } from '$lib/server/messages/conversation';
 import { logError, describeError } from '$lib/server/error_log';
+import { isCaseReadyForTechnician, notifyTechnician } from '$lib/server/salesforce/case-auto-status';
 import { getStoreAccessToken } from '$lib/server/spapi';
 import { getAsinAverageDailyRevenue } from '$lib/server/spapi_reports';
 
@@ -352,7 +355,8 @@ async function postCaseMessage({ request, user, storeId, caseId }: ActionContext
 
 	const result = await postConversationMessage(scope, user, await request.formData());
 	if (!result.ok) return fail(result.status, { messageError: result.error, messageBody: result.body });
-	return { messageSuccess: 'Message sent.' };
+	const promptNotify = await isCaseReadyForTechnician(caseId, { userId: user.id, accountId: scope.accountId });
+	return { messageSuccess: 'Message sent.', promptNotify };
 }
 
 /**
@@ -394,13 +398,22 @@ export function createCaseActions<P extends Partial<Record<string, string>> & { 
 					onboardingFieldErrors: result.fieldErrors ?? {}
 				});
 			}
-			return { onboardingSuccess: 'Onboarding information saved.' };
+			return { onboardingSuccess: 'Onboarding information saved.', promptNotify: await isCaseReadyForTechnician(caseId, ctx) };
 		}),
 
 		/** Post a message to THIS Case only (App Message, Case context). */
 		post_message: action('messageError', postCaseMessage),
 		/** Back-compat alias for the previous action name. */
 		post_comment: action('messageError', postCaseMessage),
+
+		/** The client's "Notify technician": a case waiting on them moves to In Progress - Tech. */
+		notify_technician: action('notifyError', async ({ user, storeId, caseId }) => {
+			const store = await requireCaseAccess(user, storeId, caseId);
+			if (!store) return fail(502, { notifyError: UNVERIFIED_MESSAGE });
+			const result = await notifyTechnician(caseId, { userId: user.id, accountId: store.account_id });
+			if (!result.ok) return fail(result.status, { notifyError: result.error });
+			return { notifySuccess: 'Thank you. The technician has been notified.' };
+		}),
 
 		/** Mark a single message of this Case as read (Message_Read__c = now). */
 		mark_read: action('readError', async ({ request, user, storeId, caseId }) => {
@@ -588,12 +601,14 @@ export function createCaseActions<P extends Partial<Record<string, string>> & { 
 			}
 
 			const label = uploaded.length === 1 ? uploaded[0] : `${uploaded.length} files`;
+			const promptNotify = await isCaseReadyForTechnician(caseId, { userId: user.id, accountId: store.account_id });
 			if (sfIssues.length) {
 				return {
-					uploadSuccess: `Uploaded ${label}, but Salesforce sync had an issue: ${sfIssues.join('; ')}.`
+					uploadSuccess: `Uploaded ${label}, but Salesforce sync had an issue: ${sfIssues.join('; ')}.`,
+					promptNotify
 				};
 			}
-			return { uploadSuccess: `Uploaded ${label}.` };
+			return { uploadSuccess: `Uploaded ${label}.`, promptNotify };
 		}),
 
 		/**

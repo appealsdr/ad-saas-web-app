@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const { conv, overviewMod } = vi.hoisted(() => ({
+const { conv, overviewMod, status } = vi.hoisted(() => ({
+	status: { isCaseReadyForTechnician: vi.fn(), notifyTechnician: vi.fn() },
 	conv: {
 		resolveAccountScope: vi.fn(),
 		resolveStoreScope: vi.fn(),
@@ -15,6 +16,7 @@ vi.mock('$lib/server/db', () => ({ sql: vi.fn(async () => [{ sfdc_contact_id: '0
 vi.mock('$lib/server/error_log', () => ({ logError: vi.fn(async () => {}) }));
 vi.mock('$lib/server/messages/conversation', () => conv);
 vi.mock('$lib/server/messages/overview', () => overviewMod);
+vi.mock('$lib/server/salesforce/case-auto-status', () => status);
 
 import { load, actions } from '../../src/routes/(app)/messages/+page.server';
 
@@ -30,6 +32,7 @@ const ev = (over: object = {}) => ({ locals: { user: USER }, url: new URL('http:
 beforeEach(() => {
 	Object.values(conv).forEach((f) => f.mockReset());
 	overviewMod.loadMessagesOverview.mockReset();
+	Object.values(status).forEach((f) => f.mockReset());
 });
 
 describe('/messages load', () => {
@@ -121,6 +124,26 @@ describe('/messages conversation selection (account / store / case)', () => {
 		);
 		expect(conv.markConversationRead.mock.calls[0][0]).toBe(caseScope);
 	});
+	it('a case reply that leaves nothing outstanding offers the notification, and notify acts on that case', async () => {
+		conv.resolveCaseScope.mockResolvedValue(caseScope);
+		conv.postConversationMessage.mockResolvedValue({ ok: true });
+		status.isCaseReadyForTechnician.mockResolvedValue(true);
+		status.notifyTechnician.mockResolvedValue({ ok: true });
+		const url = new URL('http://x/messages?/post_message&store=st1&case=500000000000001AAA');
+		expect(await (actions.post_message as any)(ev({ url }))).toMatchObject({ promptNotify: true });
+		expect(status.notifyTechnician).not.toHaveBeenCalled();
+		expect(await (actions.notify_technician as any)(ev({ url }))).toMatchObject({ notifySuccess: expect.any(String) });
+		expect(status.notifyTechnician).toHaveBeenCalledWith('500000000000001AAA', { userId: 'u1', accountId: 'acct-1' });
+	});
+	it('notify refuses anything but a case the user owns', async () => {
+		conv.resolveCaseScope.mockResolvedValue(null);
+		conv.resolveStoreScope.mockResolvedValue(storeScope);
+		for (const qs of ['&store=st1&case=500000000000009AAA', '&store=st1']) {
+			const res: any = await (actions.notify_technician as any)(ev({ url: new URL(`http://x/messages?/notify_technician${qs}`) }));
+			expect(res.status).toBe(404);
+		}
+		expect(status.notifyTechnician).not.toHaveBeenCalled();
+	});
 	it('actions refuse a conversation the user does not own', async () => {
 		conv.resolveStoreScope.mockResolvedValue(null);
 		const res: any = await (actions.post_message as any)(ev({ url: new URL('http://x/messages?/post_message&store=evil') }));
@@ -134,7 +157,8 @@ describe('/messages actions', () => {
 		conv.resolveAccountScope.mockResolvedValue(scope);
 		conv.postConversationMessage.mockResolvedValue({ ok: true });
 		const res: any = await (actions.post_message as any)(ev());
-		expect(res).toEqual({ messageSuccess: 'Message sent.' });
+		expect(res).toEqual({ messageSuccess: 'Message sent.', promptNotify: false });
+		expect(status.isCaseReadyForTechnician).not.toHaveBeenCalled();
 		expect(conv.postConversationMessage.mock.calls[0][0]).toBe(scope);
 	});
 	it('post_message surfaces validation failures with the submitted body', async () => {

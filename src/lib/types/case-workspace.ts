@@ -12,4 +12,8 @@ export type CaseActionForm = {
 	messageSuccess?: string;
 	readSuccess?: boolean;
 	readError?: string;
+	/** Set by a client action that leaves nothing outstanding on a waiting case. */
+	promptNotify?: boolean;
+	notifySuccess?: string;
+	notifyError?: string;
 } | null;

@@ -1,11 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const m = vi.hoisted(() => ({ put: vi.fn(), del: vi.fn(), attach: vi.fn(), rows: [] as unknown[] }));
+const m = vi.hoisted(() => ({ advance: vi.fn(), put: vi.fn(), del: vi.fn(), attach: vi.fn(), rows: [] as unknown[] }));
 
 vi.mock('$env/dynamic/private', () => ({ env: {} }));
 vi.mock('$lib/server/db', () => ({ sql: (...a: unknown[]) => { m.rows.push(a); return Promise.resolve([]); } }));
 vi.mock('$lib/server/storage/s3', () => ({ putObject: m.put, deleteObject: m.del, getRegion: () => 'us-east-1' }));
 vi.mock('$lib/server/salesforce', () => ({ attachUploadToRequiredFile: m.attach }));
+vi.mock('$lib/server/salesforce/case-auto-status', () => ({ advanceCaseWhenClientDone: m.advance }));
 vi.mock('$lib/server/error_log', () => ({ logError: async () => {}, describeError: () => ({ errorMessage: 'x', stack: '' }) }));
 
 import { validateUpload, storeRequiredFileUpload, contentMatchesMime, MAX_UPLOAD_BYTES } from '../../src/lib/server/files/required_file_upload';
@@ -46,7 +47,7 @@ describe('validateUpload', () => {
 });
 
 describe('storeRequiredFileUpload', () => {
-	beforeEach(() => { m.put.mockReset().mockResolvedValue({ bucket: 'b' }); m.del.mockReset(); m.attach.mockReset().mockResolvedValue({ ok: true, s3DocumentId: 's3' }); m.rows.length = 0; });
+	beforeEach(() => { m.put.mockReset().mockResolvedValue({ bucket: 'b' }); m.del.mockReset(); m.attach.mockReset().mockResolvedValue({ ok: true, s3DocumentId: 's3' }); m.rows.length = 0; m.advance.mockReset(); });
 	const store = { id: 's1', account_id: 'acc1', sfdc_store_id: 'a0S000000000001' };
 
 	it('stores a case-level file under the account/store/case path and links it in Salesforce', async () => {
@@ -65,6 +66,14 @@ describe('storeRequiredFileUpload', () => {
 		const r = await storeRequiredFileUpload({ store, userId: 'u1', slot: slot() }, input());
 		expect(r).toMatchObject({ salesforceSynced: false, salesforceError: 'boom' });
 		expect(m.del).not.toHaveBeenCalled();
+	});
+	it('runs the automatic status change for a synced case file only', async () => {
+		await storeRequiredFileUpload({ store, userId: 'u1', slot: slot() }, input());
+		m.attach.mockResolvedValueOnce({ ok: false, error: 'boom' });
+		await storeRequiredFileUpload({ store, caseId: '500Hn00000AbCdEIAV', userId: 'u1', slot: slot() }, input());
+		expect(m.advance).not.toHaveBeenCalled();
+		await storeRequiredFileUpload({ store, caseId: '500Hn00000AbCdEIAV', userId: 'u1', slot: slot() }, input());
+		expect(m.advance).toHaveBeenCalledWith('500Hn00000AbCdEIAV', { userId: 'u1', accountId: 'acc1' });
 	});
 	it('does not write anything when validation fails', async () => {
 		await expect(storeRequiredFileUpload({ store, userId: 'u1', slot: slot() }, input({ fileName: 'x.png' }))).rejects.toBeInstanceOf(ApiError);

@@ -23,7 +23,6 @@
  */
 import { sfdcQuery, sobjectCreate, sobjectUpdate, SalesforceApiError } from './client';
 import { logError } from '../error_log';
-import { advanceCaseWhenClientDone } from './case-auto-status';
 import {
 	APP_MESSAGE_CONTEXT_TYPES,
 	type AppMessage,
@@ -304,7 +303,6 @@ export async function createAppMessage(
 			return { ok: false, error: 'Salesforce could not save the message. Please try again.' };
 		}
 		// Messages created here are the client's: this may be the reply the case was waiting for.
-		if (contextType === 'Case') await advanceCaseWhenClientDone(contextId, reqCtx);
 		return { ok: true, id: created.id };
 	} catch (e) {
 		const { errorCode } = await logSfError('create_message', e, reqCtx, { contextType, contextId });

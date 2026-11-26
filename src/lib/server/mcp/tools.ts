@@ -26,6 +26,7 @@ import { findSlotFile, presignSlotFile } from '../files/required_file_download';
 import { sanitizeMessageHtml, htmlToText } from '../sanitize';
 import { storeJson, caseSummaryJson, caseDetailJson, messageJson, requiredFileJson } from '../integrations/serializers';
 import { listCasesForStore, fetchCase, listCaseMessages, listRequiredFilesForCase, listRequiredFilesForStore, createCaseMessage } from '../salesforce';
+import { advanceCaseWhenClientDone } from '../salesforce/case-auto-status';
 
 /** Largest file accepted through MCP (base64 in a JSON message). Bigger files go through the REST upload endpoint. */
 export const MCP_MAX_FILE_BYTES = 5 * 1024 * 1024;
@@ -338,6 +339,7 @@ export const TOOLS: McpTool[] = [
 			const res = await withIdempotency(p.integrationId, `mcp.post_message:${caseId}`, `mcp-${h.slice(0, 48)}`, h, async () => {
 				const created = await createCaseMessage({ caseId, senderContactId: contactId, body: clean, replyToMessageId: replyTo }, { userId: p.defaultUserId, accountId: p.accountId });
 				if (!created.ok) throw new ApiError(502, 'UPSTREAM_ERROR', 'Salesforce rejected the message.');
+				await advanceCaseWhenClientDone(caseId, { userId: p.defaultUserId, accountId: p.accountId });
 				return { status: 201, body: { posted: true, id: created.id, caseId } };
 			});
 			return { ...(res.body as object), ...(res.replayed ? { replayed: true } : {}) };

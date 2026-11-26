@@ -1,10 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const m = vi.hoisted(() => ({ put: vi.fn(), attach: vi.fn(), createMsg: vi.fn(), slot: {} as Record<string, unknown> }));
+const m = vi.hoisted(() => ({ advance: vi.fn(), put: vi.fn(), attach: vi.fn(), createMsg: vi.fn(), slot: {} as Record<string, unknown> }));
 
 vi.mock('$env/dynamic/private', () => ({ env: {} }));
 vi.mock('$lib/server/db', () => ({ sql: () => Promise.resolve([]) }));
 vi.mock('$lib/server/storage/s3', () => ({ putObject: m.put, deleteObject: async () => {}, getRegion: () => 'us-east-1' }));
+vi.mock('$lib/server/salesforce/case-auto-status', () => ({ advanceCaseWhenClientDone: m.advance }));
 vi.mock('$lib/server/error_log', () => ({ logError: async () => {}, describeError: () => ({ errorMessage: 'x', stack: '' }) }));
 vi.mock('$lib/server/salesforce', () => ({
 	attachUploadToRequiredFile: m.attach, createCaseMessage: m.createMsg,
@@ -30,6 +31,7 @@ const pdfB64 = Buffer.from('%PDF-1.4 test').toString('base64');
 const upload = (over: Record<string, unknown> = {}) => ({ storeId: STORE, caseId: CASE, requiredFileId: SLOT, fileName: 'id.pdf', contentType: 'application/pdf', contentBase64: pdfB64, ...over });
 
 beforeEach(() => {
+	m.advance.mockReset();
 	m.put.mockReset().mockResolvedValue({ bucket: 'b' });
 	m.attach.mockReset().mockResolvedValue({ ok: true, s3DocumentId: 's3' });
 	m.createMsg.mockReset().mockResolvedValue({ ok: true, id: 'a0XHn00000QrStUMAV' });
@@ -79,12 +81,15 @@ describe('post_message', () => {
 		expect(r.preview).toBe(true);
 		expect(r.wouldPost.text).not.toContain('script');
 		expect(m.createMsg).not.toHaveBeenCalled();
+		expect(m.advance).not.toHaveBeenCalled();
 	});
 	it('posts with confirm=true as the connection user', async () => {
 		const r: any = await tool('post_message').run(p, args({ confirm: true }));
 		expect(r).toMatchObject({ posted: true, id: 'a0XHn00000QrStUMAV' });
 		expect(m.createMsg.mock.calls[0][0]).toMatchObject({ caseId: CASE, senderContactId: '003000000000001' });
 		expect(m.createMsg.mock.calls[0][1]).toMatchObject({ userId: 'u1', accountId: 'acc' });
+		// No popup in this channel: the status change stays automatic.
+		expect(m.advance).toHaveBeenCalledWith(CASE, { userId: 'u1', accountId: 'acc' });
 	});
 	it('rejects empty bodies', async () => {
 		await expect(tool('post_message').run(p, args({ body: '   ' }))).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });

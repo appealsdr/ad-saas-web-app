@@ -30,6 +30,7 @@ import {
 } from '$lib/server/messages/conversation';
 import { loadMessagesOverview } from '$lib/server/messages/overview';
 import { logError } from '$lib/server/error_log';
+import { isCaseReadyForTechnician, notifyTechnician } from '$lib/server/salesforce/case-auto-status';
 
 type User = { id: string };
 
@@ -96,7 +97,21 @@ export const actions: Actions = {
 		if (!scope) return fail(404, { messageError: 'Conversation not found.', messageBody: '' });
 		const result = await postConversationMessage(scope, locals.user, await request.formData());
 		if (!result.ok) return fail(result.status, { messageError: result.error, messageBody: result.body });
-		return { messageSuccess: 'Message sent.' };
+		const promptNotify =
+			scope.kind === 'case' && !!scope.contextId &&
+			(await isCaseReadyForTechnician(scope.contextId, { userId: locals.user.id, accountId: scope.accountId }));
+		return { messageSuccess: 'Message sent.', promptNotify };
+	},
+
+	/** The client's "Notify technician" for the selected case chat. */
+	notify_technician: async ({ locals, url }) => {
+		if (!locals.user) throw redirect(303, '/login');
+		const scope = await resolveSelectedScope(locals.user, url);
+		if (!scope || scope.kind !== 'case') return fail(404, { notifyError: 'Case not found.' });
+		if (!scope.contextId) return fail(502, { notifyError: scope.unavailableReason ?? 'Could not verify this case right now.' });
+		const result = await notifyTechnician(scope.contextId, { userId: locals.user.id, accountId: scope.accountId });
+		if (!result.ok) return fail(result.status, { notifyError: result.error });
+		return { notifySuccess: 'Thank you. The technician has been notified.' };
 	},
 
 	/** Mark a message of the selected conversation as read. */
