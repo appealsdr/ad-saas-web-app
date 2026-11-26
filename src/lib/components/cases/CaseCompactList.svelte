@@ -1,10 +1,11 @@
 <script lang="ts">
 	/**
-	 * Split view's list: Case #, Subject, Store and Service only. Each selectable
+	 * Split view's list: Case #, Subject, Store, Service and Status only. Each selectable
 	 * case is a link (Enter selects; Up/Down move between cases). Cases without a
 	 * local store are shown but can't be selected.
 	 */
-	import type { IssueRow } from '$lib/cases/case-list';
+	import Badge from '$lib/components/ui/Badge.svelte';
+	import { statusVariant, type IssueRow } from '$lib/cases/case-list';
 
 	export let cases: IssueRow[] = [];
 	export let selectedId: string | null = null;
@@ -39,6 +40,7 @@
 					<span class="service">{c.recordTypeName ?? '—'}</span>
 					<span class="subject" title={c.Subject ?? undefined}>{c.Subject ?? '—'}</span>
 					<span class="store">{c.storeName ?? '—'}</span>
+					<span class="status"><Badge variant={statusVariant(c.Status)}>{c.Status}</Badge></span>
 				</a>
 			{:else}
 				<div class="row disabled">
@@ -46,6 +48,7 @@
 					<span class="service">{c.recordTypeName ?? '—'}</span>
 					<span class="subject" title={c.Subject ?? undefined}>{c.Subject ?? '—'}</span>
 					<span class="store orphan">Unlinked store</span>
+					<span class="status"><Badge variant={statusVariant(c.Status)}>{c.Status}</Badge></span>
 				</div>
 			{/if}
 		</li>
@@ -66,11 +69,13 @@
 	.row.disabled { cursor: default; color: var(--grey-text); }
 	.num { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 600; }
 	.service { font-size: 12px; color: var(--grey-text); text-align: right; overflow-wrap: anywhere; }
-	.subject, .store { grid-column: 1 / -1; min-width: 0; overflow-wrap: anywhere; }
+	.subject, .store { min-width: 0; overflow-wrap: anywhere; }
+	.subject { grid-column: 1 / -1; }
 	.subject {
 		font-weight: 500; display: -webkit-box; -webkit-box-orient: vertical;
 		-webkit-line-clamp: 2; line-clamp: 2; overflow: hidden;
 	}
-	.store { font-size: 12px; color: var(--grey-text); }
+	.store { align-self: center; font-size: 12px; color: var(--grey-text); }
+	.status { align-self: center; justify-self: end; }
 	.orphan { font-style: italic; }
 </style>

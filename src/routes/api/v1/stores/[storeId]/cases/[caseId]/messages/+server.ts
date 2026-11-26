@@ -7,6 +7,7 @@ import { requireIntegrationStore, requireIntegrationCase, getUserSfdcContactId }
 import { messageJson } from '$lib/server/integrations/serializers';
 import { listCaseMessages, createCaseMessage } from '$lib/server/salesforce';
 import { sanitizeMessageHtml, htmlToText } from '$lib/server/sanitize';
+import { advanceCaseWhenClientDone } from '$lib/server/salesforce/case-auto-status';
 
 export const GET: RequestHandler = apiRoute(
 	{ permission: 'messages.list', operation: 'messages.list', resourceType: 'case' },
@@ -49,6 +50,7 @@ export const POST: RequestHandler = apiRoute(
 				{ userId: principal.defaultUserId, accountId: principal.accountId }
 			);
 			if (!created.ok) throw new ApiError(502, 'UPSTREAM_ERROR', 'Salesforce rejected the message.');
+			await advanceCaseWhenClientDone(caseId, { userId: principal.defaultUserId, accountId: principal.accountId });
 			return { status: 201, body: { data: { id: created.id, caseId } } };
 		});
 		return apiJson(result.body, result.status, result.replayed ? { 'idempotent-replayed': 'true' } : {});

@@ -8,6 +8,7 @@
 	 */
 	import { enhance } from '$app/forms';
 	import CaseTimeline from '$components/cases/CaseTimeline.svelte';
+	import NotifyTechnicianDialog from '$components/cases/NotifyTechnicianDialog.svelte';
 	import ConversationPanel from '$components/messages/ConversationPanel.svelte';
 	import RequiredFiles from '$components/files/RequiredFiles.svelte';
 	import { isWaitingOnClient } from '$lib/cases/case-list';
@@ -56,6 +57,22 @@
 	function badgeClass(status: string): string {
 		return STATUS_BADGE[status.toLowerCase()] ?? 'badge-grey';
 	}
+	// ── "Notify technician" ──
+	$: waitingOnClient = data.case.Status.trim().toLowerCase() === 'waiting on client';
+	let notifyOpen = false;
+	let notified: string | null = null;
+	let handledForm: CaseActionForm = null;
+	// Offered once for each client action that leaves nothing outstanding.
+	$: onForm(form);
+	function onForm(next: CaseActionForm) {
+		if (next === handledForm) return;
+		handledForm = next;
+		if (next?.promptNotify) openNotify();
+	}
+	function openNotify() {
+		notified = null;
+		notifyOpen = true;
+	}
 	// ── Formatters ──
 	function fmtDate(iso: string | null | undefined) {
 		if (!iso) return '—';
@@ -88,6 +105,7 @@
 		</div>
 	{/if}
 
+	{#if notified}<div class="alert alert-success" role="status" style="margin-bottom:14px">{notified}</div>{/if}
 	{#if form?.revenueRiskSuccess}<div class="alert alert-success" style="margin-bottom:14px">{form.revenueRiskSuccess}</div>{/if}
 	{#if form?.revenueRiskError}<div class="alert alert-error" style="margin-bottom:14px">{form.revenueRiskError}</div>{/if}
 	{#if form?.uploadSuccess}<div class="alert alert-success" style="margin-bottom:14px">{form.uploadSuccess}</div>{/if}
@@ -98,6 +116,9 @@
 			<div class="hero-title-row">
 				<h1 class="hero-title">{data.case.Subject ?? data.case.recordTypeName ?? data.case.CaseNumber}</h1>
 				<span class={`badge ${badgeClass(data.case.Status)}`}>{data.case.Status}</span>
+				{#if waitingOnClient}
+					<button type="button" class="btn btn-primary btn-sm" data-mutates on:click={openNotify}>Notify technician</button>
+				{/if}
 			</div>
 			<div class="hero-meta">
 				{#if data.case.asin}
@@ -276,6 +297,15 @@
 
 	<CaseTimeline events={data.timeline} historyError={data.historyError} />
 </div>
+
+{#if notifyOpen}
+	<NotifyTechnicianDialog
+		action="?/notify_technician"
+		onClose={() => (notifyOpen = false)}
+		onNotified={(message) => (notified = message)}
+		onRefresh={onMutated}
+	/>
+{/if}
 
 <style>
 	/* Color tokens — defaults match the mockup; override at root if your

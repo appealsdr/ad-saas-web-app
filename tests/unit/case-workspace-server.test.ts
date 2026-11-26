@@ -3,7 +3,8 @@ import { describe, it, expect, vi, beforeAll, beforeEach } from 'vitest';
 
 const m = vi.hoisted(() => ({
 	lookup: vi.fn(), fetchCase: vi.fn(), listFiles: vi.fn(), listCases: vi.fn(), messages: vi.fn(), createMessage: vi.fn(),
-	attach: vi.fn(), clear: vi.fn(), saveOnboarding: vi.fn(), updateRevenue: vi.fn(), put: vi.fn(), del: vi.fn()
+	attach: vi.fn(), clear: vi.fn(), saveOnboarding: vi.fn(), updateRevenue: vi.fn(), put: vi.fn(), del: vi.fn(),
+	ready: vi.fn(), notify: vi.fn()
 }));
 
 vi.mock('$lib/server/salesforce', () => ({
@@ -24,6 +25,7 @@ vi.mock('$lib/server/salesforce', () => ({
 	fetchCaseOnboarding: async () => null,
 	saveCaseOnboarding: m.saveOnboarding
 }));
+vi.mock('$lib/server/salesforce/case-auto-status', () => ({ isCaseReadyForTechnician: m.ready, notifyTechnician: m.notify }));
 vi.mock('$lib/server/storage/s3', () => ({ putObject: m.put, deleteObject: m.del, getRegion: () => 'us-east-1' }));
 vi.mock('$lib/server/error_log', () => ({ logError: async () => {}, describeError: () => ({ errorMessage: 'x', stack: '' }) }));
 
@@ -68,6 +70,8 @@ describe.skipIf(!hasDb)('case routes: tenancy and failures', () => {
 		m.listCases.mockResolvedValue({ ok: true, cases: [] });
 		m.put.mockResolvedValue({ bucket: 'b' });
 		m.attach.mockResolvedValue({ ok: true });
+		m.ready.mockResolvedValue(false);
+		m.notify.mockResolvedValue({ ok: true });
 	});
 
 	const depends = () => {};
@@ -82,7 +86,7 @@ describe.skipIf(!hasDb)('case routes: tenancy and failures', () => {
 		actions[name]({ params, locals: { user }, request: form(entries) });
 	const status = async (p: Promise<unknown>) => p.then(() => 200, (e) => e.status);
 	const untouched = () => {
-		for (const f of [m.attach, m.clear, m.saveOnboarding, m.updateRevenue, m.createMessage, m.put, m.del]) expect(f).not.toHaveBeenCalled();
+		for (const f of [m.attach, m.clear, m.saveOnboarding, m.updateRevenue, m.createMessage, m.put, m.del, m.notify]) expect(f).not.toHaveBeenCalled();
 	};
 
 	it('loads the same workspace through both routes for the owner', async () => {
@@ -119,7 +123,7 @@ describe.skipIf(!hasDb)('case routes: tenancy and failures', () => {
 	});
 
 	it('refuses every mutation of another account’s case', async () => {
-		const names = ['save_onboarding', 'post_message', 'mark_read', 'recalculate_revenue_at_risk', 'upload_doc', 'clear_doc'];
+		const names = ['save_onboarding', 'post_message', 'mark_read', 'recalculate_revenue_at_risk', 'upload_doc', 'clear_doc', 'notify_technician'];
 		for (const name of names) {
 			const entries = { body: 'hi', messageId: 'm1', requiredFileId: SLOT_A, file: new File(['x'], 'a.txt', { type: 'text/plain' }) };
 			expect(await status(act(splitActions, name, userB, { caseId: CASE_A }, entries)), name).toBe(404);
@@ -139,11 +143,27 @@ describe.skipIf(!hasDb)('case routes: tenancy and failures', () => {
 
 	it('uploads for the owner and takes the tombstoned document id from Salesforce, not the browser', async () => {
 		const up = await act(splitActions, 'upload_doc', userA, { caseId: CASE_A }, { requiredFileId: SLOT_A, file: new File(['x'], 'a.txt', { type: 'text/plain' }) });
-		expect(up).toEqual({ uploadSuccess: 'Uploaded a.txt.' });
+		expect(up).toEqual({ uploadSuccess: 'Uploaded a.txt.', promptNotify: false });
 		expect(m.put.mock.calls[0][0]).toContain(`/Stores/${storeA}/Issues/${CASE_A}/`);
 		m.listFiles.mockResolvedValue({ ok: true, files: [{ id: SLOT_A, upload: { s3DocumentId: 'real-doc' } }] });
 		await act(splitActions, 'clear_doc', userA, { caseId: CASE_A }, { requiredFileId: SLOT_A, s3DocumentId: 'forged' });
 		expect(m.clear).toHaveBeenCalledWith(SLOT_A, 'real-doc', expect.anything());
+	});
+
+	it('asks to offer the notification when an upload leaves nothing outstanding', async () => {
+		m.ready.mockResolvedValue(true);
+		const up = await act(splitActions, 'upload_doc', userA, { caseId: CASE_A }, { requiredFileId: SLOT_A, file: new File(['x'], 'a.txt', { type: 'text/plain' }) });
+		expect(up).toMatchObject({ promptNotify: true });
+		expect(m.notify).not.toHaveBeenCalled();
+	});
+
+	it('notifies the technician for the owner on both routes, and passes a refusal on', async () => {
+		for (const [actions, params] of [[splitActions, { caseId: CASE_A }], [canonicalActions, { id: storeA, caseId: CASE_A }]] as const) {
+			expect(await act(actions, 'notify_technician', userA, params)).toMatchObject({ notifySuccess: expect.any(String) });
+		}
+		expect(m.notify).toHaveBeenCalledWith(CASE_A, expect.objectContaining({ userId: userA.id }));
+		m.notify.mockResolvedValue({ ok: false, status: 409, error: 'This case is no longer waiting on you.' });
+		expect(await act(splitActions, 'notify_technician', userA, { caseId: CASE_A })).toMatchObject({ status: 409, data: { notifyError: expect.stringContaining('no longer') } });
 	});
 
 	it('keeps a temporary Salesforce failure inside the pane', async () => {

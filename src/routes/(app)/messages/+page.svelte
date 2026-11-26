@@ -2,12 +2,14 @@
 	import Topbar from '$components/layout/Topbar.svelte';
 	import ConversationPanel from '$components/messages/ConversationPanel.svelte';
 	import ThreadPane from '$components/messages/ThreadPane.svelte';
+	import NotifyTechnicianDialog from '$components/cases/NotifyTechnicianDialog.svelte';
 	import { refreshNotifications } from '$stores/notifications';
 	import type { MessagesOverview } from '$lib/server/messages/overview';
 	import type { ConversationData } from '$lib/types/app-message';
-	import type { PageData } from './$types';
+	import type { PageData, ActionData } from './$types';
 
 	export let data: PageData;
+	export let form: ActionData = null;
 
 	const badge = (n: number) => (n > 99 ? '99+' : String(n));
 
@@ -102,13 +104,39 @@
 	$: placeholder = kind === 'case' ? 'Message this case' : kind === 'store' ? 'Message this store' : 'Message Account chat';
 	$: postAction = `?/post_message${sel?.actionQuery ?? ''}`;
 	$: readAction = `?/mark_read${sel?.actionQuery ?? ''}`;
+
+	// ── "Notify technician": offered after a case reply that leaves nothing outstanding ──
+	/** The action of the case it was offered for; null = closed. */
+	let notifyAction: string | null = null;
+	let notified: string | null = null;
+	let handledForm: ActionData = null;
+	$: onForm(form);
+	function onForm(next: ActionData) {
+		if (next === handledForm) return;
+		handledForm = next;
+		if (next && 'promptNotify' in next && next.promptNotify && kind === 'case') {
+			notified = null;
+			notifyAction = `?/notify_technician${sel?.actionQuery ?? ''}`;
+		}
+	}
+	// Switching conversation drops an offer or result that belongs to the previous one.
+	$: selKey, ((notifyAction = null), (notified = null));
 </script>
 
 <svelte:head><title>Messages — Appeals Doctor</title></svelte:head>
 
 <Topbar title="Messages" subtitle="Everything exchanged with Appeals Doctor for your account" crumbs={[]} />
 
+{#if notifyAction}
+	<NotifyTechnicianDialog
+		action={notifyAction}
+		onClose={() => (notifyAction = null)}
+		onNotified={(message) => (notified = message)}
+	/>
+{/if}
+
 <div class="content-area">
+	{#if notified}<div class="alert alert-success" role="status" style="margin-bottom:14px">{notified}</div>{/if}
 	{#if data.account === null}
 		<div class="alert alert-warn">No account is linked to your user yet, so messages are unavailable.</div>
 	{:else}

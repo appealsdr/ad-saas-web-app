@@ -12,7 +12,6 @@
  */
 import { sfdcQuery, sobjectUpdate, SalesforceApiError } from './client';
 import { createS3Document } from './s3-documents';
-import { advanceCaseWhenClientDone } from './case-auto-status';
 import { logError } from '$lib/server/error_log';
 import { isSalesforceId, soqlList, soqlString } from './soql';
 
@@ -245,7 +244,6 @@ export async function attachUploadToRequiredFile(
 			Last_Version__c: doc.id,
 			File_Uploaded__c: true
 		});
-		if (input.relatedObjectType === 'Case') await advanceCaseWhenClientDone(input.relatedRecordId, context);
 		return { ok: true, s3DocumentId: doc.id };
 	} catch (e) {
 		// The S3_Document__c exists; we just couldn't link it. Surface the error.

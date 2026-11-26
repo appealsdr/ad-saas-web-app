@@ -1,4 +1,4 @@
-/** "Waiting on Client" → "In Progress - Tech" once the client has done everything asked of them. */
+/** "Waiting on Client" → "In Progress - Tech": when it is offered, when it is automatic, and the client's own request. */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 type Row = Record<string, unknown>;
@@ -47,7 +47,7 @@ vi.mock('$lib/server/salesforce/client', async (original) => {
 	};
 });
 
-import { advanceCaseWhenClientDone } from '../../src/lib/server/salesforce/case-auto-status';
+import { advanceCaseWhenClientDone, isCaseReadyForTechnician, notifyTechnician } from '../../src/lib/server/salesforce/case-auto-status';
 import { createAppMessage } from '../../src/lib/server/salesforce/app-messages';
 import { attachUploadToRequiredFile } from '../../src/lib/server/salesforce/required-files';
 import { saveCaseOnboarding } from '../../src/lib/server/salesforce/case-onboarding';
@@ -115,36 +115,52 @@ describe('advanceCaseWhenClientDone', () => {
 	});
 });
 
-describe('client actions trigger the check', () => {
+describe('web app: the client decides', () => {
 	const message = () => createAppMessage({ contextType: 'Case', contextId: CASE, senderContactId: '003000000000001', body: 'Here you go' });
 	const upload = () => attachUploadToRequiredFile({ requiredFileId: missing.Id, relatedRecordId: CASE, relatedObjectType: 'Case', bucket: 'b', key: 'k', region: 'r', fileName: 'a.pdf', contentType: 'application/pdf', sizeBytes: 1 });
 
-	it('reply first, then the last file', async () => {
+	it('offers the notification once nothing is outstanding, without changing the status', async () => {
 		Object.assign(m, { messages: [team], files: [done, missing] });
-		expect((await message()).ok).toBe(true);
-		expect(moved()).toEqual([]);
-		expect((await upload()).ok).toBe(true);
-		expect(moved()).toHaveLength(1);
-	});
-
-	it('file first, then the reply', async () => {
-		Object.assign(m, { messages: [team], files: [missing] });
-		await upload();
-		expect(moved()).toEqual([]);
 		await message();
-		expect(moved()).toHaveLength(1);
-	});
-
-	it('saving onboarding information can be the last step', async () => {
-		Object.assign(m, { messages: [client, team], onboardingConfig: CONFIG });
-		expect((await saveCaseOnboarding(CASE, { ASIN__c: 'B0ABC' })).ok).toBe(true);
-		expect(moved()).toHaveLength(1);
-	});
-
-	it('store and account messages or files do not touch cases', async () => {
-		Object.assign(m, { messages: [client], files: [done] });
-		await createAppMessage({ contextType: 'Store__c', contextId: 'a0S000000000001', senderContactId: '003000000000001', body: 'Hi' });
-		await attachUploadToRequiredFile({ requiredFileId: done.Id, relatedRecordId: 'a0S000000000001', relatedObjectType: 'Store__c', bucket: 'b', key: 'k', region: 'r', fileName: 'a.pdf' } as never);
+		expect(await isCaseReadyForTechnician(CASE)).toBe(false);
+		await upload();
+		expect(await isCaseReadyForTechnician(CASE)).toBe(true);
 		expect(moved()).toEqual([]);
+	});
+
+	it('saving the reply, a file or onboarding never changes the status by itself', async () => {
+		Object.assign(m, { messages: [team], files: [missing], onboardingConfig: CONFIG });
+		await message();
+		await upload();
+		expect((await saveCaseOnboarding(CASE, { ASIN__c: 'B0ABC' })).ok).toBe(true);
+		expect(moved()).toEqual([]);
+	});
+
+	it('offers nothing when the case is not waiting or cannot be read', async () => {
+		Object.assign(m, { status: 'New', messages: [client] });
+		expect(await isCaseReadyForTechnician(CASE)).toBe(false);
+		Object.assign(m, { status: 'Waiting on Client', fail: /FROM Case_Message__c/ });
+		expect(await isCaseReadyForTechnician(CASE)).toBe(false);
+	});
+
+	it('Notify technician moves a waiting case, even with something outstanding', async () => {
+		Object.assign(m, { messages: [team], files: [missing] });
+		expect(await notifyTechnician(CASE)).toEqual({ ok: true });
+		expect(moved()).toEqual([{ object: 'Case', id: CASE, body: { Status: 'In Progress - Tech' } }]);
+	});
+
+	it('does not move a case that is no longer waiting, and accepts a repeat click', async () => {
+		m.status = 'Closed';
+		expect(await notifyTechnician(CASE)).toMatchObject({ ok: false, status: 409 });
+		m.status = 'In Progress - Tech';
+		expect(await notifyTechnician(CASE)).toEqual({ ok: true });
+		expect(await notifyTechnician("500' OR Id != '")).toMatchObject({ ok: false, status: 404 });
+		expect(moved()).toEqual([]);
+	});
+
+	it('reports a Salesforce failure instead of claiming success', async () => {
+		m.fail = /FROM Case\b/;
+		expect(await notifyTechnician(CASE)).toMatchObject({ ok: false, status: 502 });
+		expect(m.logged).toHaveBeenCalledTimes(1);
 	});
 });
