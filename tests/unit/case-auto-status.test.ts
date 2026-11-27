@@ -47,7 +47,7 @@ vi.mock('$lib/server/salesforce/client', async (original) => {
 	};
 });
 
-import { advanceCaseWhenClientDone, isCaseReadyForTechnician, notifyTechnician } from '../../src/lib/server/salesforce/case-auto-status';
+import { advanceCaseWhenClientDone, getClientTodo, isCaseReadyForTechnician, notifyTechnician } from '../../src/lib/server/salesforce/case-auto-status';
 import { createAppMessage } from '../../src/lib/server/salesforce/app-messages';
 import { attachUploadToRequiredFile } from '../../src/lib/server/salesforce/required-files';
 import { saveCaseOnboarding } from '../../src/lib/server/salesforce/case-onboarding';
@@ -143,10 +143,33 @@ describe('web app: the client decides', () => {
 		expect(await isCaseReadyForTechnician(CASE)).toBe(false);
 	});
 
-	it('Notify technician moves a waiting case, even with something outstanding', async () => {
-		Object.assign(m, { messages: [team], files: [missing] });
+	it('Notify technician refuses while something is outstanding, and says what', async () => {
+		Object.assign(m, { messages: [team], files: [done, missing], onboardingConfig: CONFIG });
+		const todo = ["Reply to our team's latest message", 'Upload 1 requested document', 'Provide the onboarding information'];
+		expect(await getClientTodo(CASE)).toEqual(todo);
+		expect(await notifyTechnician(CASE)).toEqual({ ok: false, status: 409, error: `Please finish these first: ${todo.join('; ')}.` });
+		expect(moved()).toEqual([]);
+	});
+
+	it('Notify technician moves a waiting case once nothing is outstanding', async () => {
+		Object.assign(m, { messages: [client, team], files: [done] });
+		expect(await getClientTodo(CASE)).toEqual([]);
 		expect(await notifyTechnician(CASE)).toEqual({ ok: true });
 		expect(moved()).toEqual([{ object: 'Case', id: CASE, body: { Status: 'In Progress - Tech' } }]);
+	});
+
+	it('does not block a waiting case where nothing is recorded as asked', async () => {
+		expect(await getClientTodo(CASE)).toEqual([]);
+		expect(await notifyTechnician(CASE)).toEqual({ ok: true });
+	});
+
+	it('neither enables nor moves anything when the outstanding items cannot be read', async () => {
+		for (const fail of [/FROM Required_File__c/, /FROM Case_Message__c/]) {
+			m.fail = fail;
+			expect(await getClientTodo(CASE)).toBeNull();
+			expect(await notifyTechnician(CASE)).toMatchObject({ ok: false, status: 502 });
+		}
+		expect(moved()).toEqual([]);
 	});
 
 	it('does not move a case that is no longer waiting, and accepts a repeat click', async () => {

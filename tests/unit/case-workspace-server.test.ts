@@ -4,7 +4,7 @@ import { describe, it, expect, vi, beforeAll, beforeEach } from 'vitest';
 const m = vi.hoisted(() => ({
 	lookup: vi.fn(), fetchCase: vi.fn(), listFiles: vi.fn(), listCases: vi.fn(), messages: vi.fn(), createMessage: vi.fn(),
 	attach: vi.fn(), clear: vi.fn(), saveOnboarding: vi.fn(), updateRevenue: vi.fn(), put: vi.fn(), del: vi.fn(),
-	ready: vi.fn(), notify: vi.fn()
+	ready: vi.fn(), notify: vi.fn(), todo: vi.fn()
 }));
 
 vi.mock('$lib/server/salesforce', () => ({
@@ -25,7 +25,7 @@ vi.mock('$lib/server/salesforce', () => ({
 	fetchCaseOnboarding: async () => null,
 	saveCaseOnboarding: m.saveOnboarding
 }));
-vi.mock('$lib/server/salesforce/case-auto-status', () => ({ isCaseReadyForTechnician: m.ready, notifyTechnician: m.notify }));
+vi.mock('$lib/server/salesforce/case-auto-status', () => ({ getClientTodo: m.todo, isCaseReadyForTechnician: m.ready, notifyTechnician: m.notify }));
 vi.mock('$lib/server/storage/s3', () => ({ putObject: m.put, deleteObject: m.del, getRegion: () => 'us-east-1' }));
 vi.mock('$lib/server/error_log', () => ({ logError: async () => {}, describeError: () => ({ errorMessage: 'x', stack: '' }) }));
 
@@ -71,6 +71,7 @@ describe.skipIf(!hasDb)('case routes: tenancy and failures', () => {
 		m.put.mockResolvedValue({ bucket: 'b' });
 		m.attach.mockResolvedValue({ ok: true });
 		m.ready.mockResolvedValue(false);
+		m.todo.mockResolvedValue([]);
 		m.notify.mockResolvedValue({ ok: true });
 	});
 
