@@ -51,7 +51,7 @@ import {
 	markConversationRead
 } from '$lib/server/messages/conversation';
 import { logError, describeError } from '$lib/server/error_log';
-import { isCaseReadyForTechnician, notifyTechnician } from '$lib/server/salesforce/case-auto-status';
+import { getClientTodo, isCaseReadyForTechnician, notifyTechnician } from '$lib/server/salesforce/case-auto-status';
 import { getStoreAccessToken } from '$lib/server/spapi';
 import { getAsinAverageDailyRevenue } from '$lib/server/spapi_reports';
 
@@ -320,7 +320,12 @@ export async function loadCaseWorkspace(user: CaseUser, storeId: string, caseId:
 		history: historyResult.ok ? historyResult.history : []
 	});
 
+	// What still blocks "Notify technician"; only a waiting case shows that button.
+	const waiting = caseResult.record.Status?.trim().toLowerCase() === 'waiting on client';
+	const clientTodo = waiting ? await getClientTodo(caseId, ctx) : [];
+
 	return {
+		clientTodo,
 		storeId: store.id,
 		storeName: store.name,
 		storeMarketplaces: store.marketplaces,

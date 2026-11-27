@@ -189,6 +189,34 @@
 		<div class="note">
 			You can filter the list by status (Open, In Progress, Waiting, Resolved) to focus on what needs attention. Links in our emails take you straight to the right case.
 		</div>
+
+		<h3 id="case-communication">When we need something from you</h3>
+		<p>
+			When our technician has a question or needs a document, the case changes to
+			<strong>Waiting on Client</strong>. It is now your turn. This is how it works:
+		</p>
+		<ol>
+			<li><strong>Open the case</strong> and read the latest message from our team. The top of the case also lists documents and onboarding information that are still missing.</li>
+			<li><strong>Answer every question</strong> by replying in the case messages. Your reply should cover everything the technician asked.</li>
+			<li><strong>Upload every requested document</strong> in <strong>Required Files</strong> (see <a href="#documents">Uploading documents</a>).</li>
+			<li><strong>Provide the onboarding information</strong>, if the case asks for it, and save it.</li>
+			<li><strong>Notify the technician.</strong> When nothing is left, a <em>Thank you for your reply</em> window appears. Click <strong>Notify technician</strong>, and the case changes to <strong>In Progress - Tech</strong>.</li>
+		</ol>
+		<p>
+			If you click <strong>Cancel</strong>, nothing changes: the case stays <strong>Waiting on Client</strong>.
+			You can send the notification later with the <strong>Notify technician</strong> button next to the case status.
+		</p>
+		<div class="note">
+			<strong>Is the button greyed out?</strong> Something is still missing. The button becomes active only after
+			you have replied to our latest message, uploaded all requested documents and provided any onboarding
+			information. Point to, click or tab to the <strong>ⓘ</strong> icon next to the button to see what is left.
+			If our team sends a new message, reply to it before you notify them.
+		</div>
+		<p>
+			If you answer through a one-time upload link or a connected app or assistant, you won't see that window.
+			In that case the status changes to <strong>In Progress - Tech</strong> automatically once your message or
+			file leaves nothing outstanding.
+		</p>
 	</section>
 
 	<!-- Payments -->
@@ -219,6 +247,12 @@
 		<dl class="faq">
 			<dt>How do I know what you need from me?</dt>
 			<dd>Check the <strong>Pending Files</strong> card and the <strong>Documents Pending</strong> banner on your dashboard — they list every outstanding item with a direct link.</dd>
+
+			<dt>My case says "Waiting on Client". What do I do?</dt>
+			<dd>Reply to our latest message, upload the requested documents, then click <strong>Notify technician</strong>. See <a href="#case-communication">When we need something from you</a>.</dd>
+
+			<dt>Why can't I click "Notify technician"?</dt>
+			<dd>Something is still outstanding. The <strong>ⓘ</strong> icon next to the button lists it.</dd>
 
 			<dt>Can I add my teammates?</dt>
 			<dd>Yes — an owner or admin can add them under <strong>Accounts → Account Team → + Add Team Member</strong>. See <a href="#team">How to add a team member</a>.</dd>

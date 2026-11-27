@@ -9,6 +9,7 @@
 	import { enhance } from '$app/forms';
 	import CaseTimeline from '$components/cases/CaseTimeline.svelte';
 	import NotifyTechnicianDialog from '$components/cases/NotifyTechnicianDialog.svelte';
+	import NotifyTechnicianHelp from '$components/cases/NotifyTechnicianHelp.svelte';
 	import ConversationPanel from '$components/messages/ConversationPanel.svelte';
 	import RequiredFiles from '$components/files/RequiredFiles.svelte';
 	import { isWaitingOnClient } from '$lib/cases/case-list';
@@ -59,6 +60,7 @@
 	}
 	// ── "Notify technician" ──
 	$: waitingOnClient = data.case.Status.trim().toLowerCase() === 'waiting on client';
+	$: canNotify = data.clientTodo?.length === 0;
 	let notifyOpen = false;
 	let notified: string | null = null;
 	let handledForm: CaseActionForm = null;
@@ -117,7 +119,10 @@
 				<h1 class="hero-title">{data.case.Subject ?? data.case.recordTypeName ?? data.case.CaseNumber}</h1>
 				<span class={`badge ${badgeClass(data.case.Status)}`}>{data.case.Status}</span>
 				{#if waitingOnClient}
-					<button type="button" class="btn btn-primary btn-sm" data-mutates on:click={openNotify}>Notify technician</button>
+					<span class="notify">
+						<button type="button" class="btn btn-primary btn-sm" data-mutates disabled={!canNotify} on:click={openNotify}>Notify technician</button>
+						<NotifyTechnicianHelp todo={data.clientTodo} />
+					</span>
 				{/if}
 			</div>
 			<div class="hero-meta">
@@ -347,6 +352,7 @@
 	}
 	.hero-main { display: flex; flex-direction: column; gap: 10px; flex: 1 1 0; min-width: 0; }
 	.hero-title-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+	.notify { display: inline-flex; align-items: center; gap: 6px; }
 	.hero-title { margin: 0; font-size: 21px; line-height: 1.3; font-weight: 700; color: var(--navy); text-wrap: pretty; }
 	.hero-meta {
 		display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
